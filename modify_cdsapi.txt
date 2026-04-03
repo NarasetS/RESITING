@@ -1,24 +1,6 @@
-def get_cds_credentials(file_path):
-    """
-    Reads CDS API credentials from a text file and returns them as variables.
-    """
-    credentials = {}
-    with open(file_path, 'r') as f:
-        for line in f:
-            if ':' in line:
-                # Split by first colon and strip whitespace/newlines
-                key, value = line.split(':', 1)
-                credentials[key.strip()] = value.strip()
-    
-    # Assigning to specific variables
-    url = credentials.get('url')
-    key = credentials.get('key')
-    
-    return url, key
-
 def get_url_key_verify(url, key, verify):
-    file_path = 'Data\\cds_api.txt'
-    url, key = get_cds_credentials(file_path)
+    url = xxxx
+    key = xxxxx
 
     if url is None:
         url = os.environ.get("CDSAPI_URL")
