@@ -1,0 +1,48 @@
+def get_cds_credentials(file_path):
+    """
+    Reads CDS API credentials from a text file and returns them as variables.
+    """
+    credentials = {}
+    with open(file_path, 'r') as f:
+        for line in f:
+            if ':' in line:
+                # Split by first colon and strip whitespace/newlines
+                key, value = line.split(':', 1)
+                credentials[key.strip()] = value.strip()
+    
+    # Assigning to specific variables
+    url = credentials.get('url')
+    key = credentials.get('key')
+    
+    return url, key
+
+def get_url_key_verify(url, key, verify):
+    file_path = 'Data\\cds_api.txt'
+    url, key = get_cds_credentials(file_path)
+
+    if url is None:
+        url = os.environ.get("CDSAPI_URL")
+    if key is None:
+        key = os.environ.get("CDSAPI_KEY")
+    dotrc = os.environ.get("CDSAPI_RC", os.path.expanduser("~/.cdsapirc"))
+
+    if url is None or key is None:
+        if os.path.exists(dotrc):
+            config = read_config(dotrc)
+
+            if key is None:
+                key = config.get("key")
+
+            if url is None:
+                url = config.get("url")
+
+            if verify is None:
+                verify = bool(int(config.get("verify", 1)))
+
+    if url is None or key is None:
+        raise Exception("Missing/incomplete configuration file: %s" % (dotrc))
+
+    # If verify is still None, then we set to default value of True
+    if verify is None:
+        verify = True
+    return url, key, verify
