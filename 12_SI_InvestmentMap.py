@@ -9,7 +9,7 @@ import numpy as np
 import folium
 
 ###################### Config ################################################################################################
-coarsenscale = 10
+coarsenscale = 5
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -191,11 +191,11 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R1': 0, 'R2': 8000, 'R3': 1500, 'R4': 0},
-    'solar': {'R0': 100, 'R1': 5000, 'R2': 9000, 'R3': 7000, 'R4': 5000},
-    'biomass': {'R0': 0, 'R1': 500, 'R2': 500, 'R3': 100, 'R4': 0},
-    'bgec': {'R0': 0, 'R1': 50, 'R2': 50, 'R3': 0, 'R4': 0},
-    'msw': {'R0': 0, 'R1': 10, 'R2': 10, 'R3': 10, 'R4': 0}
+    'wind': {'R0': 0, 'R1': 6582, 'R2': 16540, 'R3': 1678, 'R4': 2320},
+    'solar': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
+    'biomass': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
+    'bgec': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
+    'msw': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0}
 }
 
 quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.items()}
