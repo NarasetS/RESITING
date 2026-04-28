@@ -191,11 +191,11 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R1': 0, 'R2': 6500, 'R3': 500, 'R4': 0},
-    'solar': {'R0': 100, 'R1': 3500, 'R2': 6500, 'R3': 6000, 'R4': 3500},
-    'biomass': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'bgec': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'msw': {'R0': 0, 'R1': 0.0, 'R2': 0.0, 'R3': 0.0, 'R4': 0}
+    'wind': {'R0': 0, 'R1': 0, 'R2': 8000, 'R3': 1500, 'R4': 0},
+    'solar': {'R0': 100, 'R1': 5000, 'R2': 9000, 'R3': 7000, 'R4': 5000},
+    'biomass': {'R0': 0, 'R1': 500, 'R2': 500, 'R3': 100, 'R4': 0},
+    'bgec': {'R0': 0, 'R1': 50, 'R2': 50, 'R3': 0, 'R4': 0},
+    'msw': {'R0': 0, 'R1': 10, 'R2': 10, 'R3': 10, 'R4': 0}
 }
 
 quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.items()}
@@ -208,115 +208,98 @@ for tech, total in quota_totals.items():
 ######################## model #####################################################
 m = linopy.Model()
 
-built_wind = m.add_variables(binary=True, coords=xr_ref.coords, name='built_wind')
-cap_wind = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_wind')
+built_wind = m.add_variables(binary=True, coords=xr_ref.coords, name='built_wind') if quota_totals['wind'] > 0 else None
+cap_wind = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_wind') if quota_totals['wind'] > 0 else None
 
-built_solar = m.add_variables(binary=True, coords=xr_ref.coords, name='built_solar')
-cap_solar = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_solar')
+built_solar = m.add_variables(binary=True, coords=xr_ref.coords, name='built_solar') if quota_totals['solar'] > 0 else None
+cap_solar = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_solar') if quota_totals['solar'] > 0 else None
 
-built_biomass = m.add_variables(binary=True, coords=xr_ref.coords, name='built_biomass')
-cap_biomass = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_biomass')
+built_biomass = m.add_variables(binary=True, coords=xr_ref.coords, name='built_biomass') if quota_totals['biomass'] > 0 else None
+cap_biomass = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_biomass') if quota_totals['biomass'] > 0 else None
 
-built_bgec = m.add_variables(binary=True, coords=xr_ref.coords, name='built_bgec')
-cap_bgec = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_bgec')
+built_bgec = m.add_variables(binary=True, coords=xr_ref.coords, name='built_bgec') if quota_totals['bgec'] > 0 else None
+cap_bgec = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_bgec') if quota_totals['bgec'] > 0 else None
 
-built_msw = m.add_variables(binary=True, coords=xr_ref.coords, name='built_msw')
-cap_msw = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_msw')
+built_msw = m.add_variables(binary=True, coords=xr_ref.coords, name='built_msw') if quota_totals['msw'] > 0 else None
+cap_msw = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_msw') if quota_totals['msw'] > 0 else None
 
 ############################################ Constraint Building Location Logic ##############################################################################
-constr_built_logic =  m.add_constraints(
-    (
-        built_wind.rolling(lat = rollingwindow_wind,min_periods=1,center=True).sum().rolling(lon = rollingwindow_wind,min_periods=1,center=True).sum()
-        +
-        built_solar.rolling(lat = rollingwindow_solar,min_periods=1,center=True).sum().rolling(lon = rollingwindow_solar,min_periods=1,center=True).sum()
-        +
-        built_biomass.rolling(lat = rollingwindow_biomass,min_periods=1,center=True).sum().rolling(lon = rollingwindow_biomass,min_periods=1,center=True).sum()
-        +
-        built_bgec.rolling(lat = rollingwindow_bgec,min_periods=1,center=True).sum().rolling(lon = rollingwindow_bgec,min_periods=1,center=True).sum()
-        +
-        built_msw.rolling(lat = rollingwindow_msw,min_periods=1,center=True).sum().rolling(lon = rollingwindow_msw,min_periods=1,center=True).sum()
-    )
-        <= 1
-        , name='constr_built_logic'
-)
+built_terms = []
+if built_wind is not None:
+    built_terms.append(built_wind.rolling(lat = rollingwindow_wind,min_periods=1,center=True).sum().rolling(lon = rollingwindow_wind,min_periods=1,center=True).sum())
+if built_solar is not None:
+    built_terms.append(built_solar.rolling(lat = rollingwindow_solar,min_periods=1,center=True).sum().rolling(lon = rollingwindow_solar,min_periods=1,center=True).sum())
+if built_biomass is not None:
+    built_terms.append(built_biomass.rolling(lat = rollingwindow_biomass,min_periods=1,center=True).sum().rolling(lon = rollingwindow_biomass,min_periods=1,center=True).sum())
+if built_bgec is not None:
+    built_terms.append(built_bgec.rolling(lat = rollingwindow_bgec,min_periods=1,center=True).sum().rolling(lon = rollingwindow_bgec,min_periods=1,center=True).sum())
+if built_msw is not None:
+    built_terms.append(built_msw.rolling(lat = rollingwindow_msw,min_periods=1,center=True).sum().rolling(lon = rollingwindow_msw,min_periods=1,center=True).sum())
+
+if built_terms:
+    constr_built_logic = m.add_constraints(sum(built_terms) <= 1, name='constr_built_logic')
 ############################################ Constraint Building Location Logic ##############################################################################
 
 ############################################ Constraint Capacity ##############################################################################
-constr_maxcap_wind = m.add_constraints(
-    cap_wind <= (built_wind * (xr_ref['AVA_Wind'].rolling(lon = rollingwindow_wind, lat = rollingwindow_wind, min_periods=1,center=True).sum() * mwperkm2_wind))
-    ,name = 'constr_maxcap_wind'
-)
-# constr_mincap_wind = m.add_constraints(
-#     cap_wind >= (built_wind * 1)
-#     ,name = 'constr_mincap_wind'
-# )
-constr_builtarea_wind = m.add_constraints(
-    built_wind <= (xr_ref['AVA_Wind'] * 10000)
-    ,name = 'constr_builtarea_wind'
-)
+if built_wind is not None:
+    constr_maxcap_wind = m.add_constraints(
+        cap_wind <= (built_wind * (xr_ref['AVA_Wind'].rolling(lon = rollingwindow_wind, lat = rollingwindow_wind, min_periods=1,center=True).sum() * mwperkm2_wind))
+        ,name = 'constr_maxcap_wind'
+    )
+    constr_builtarea_wind = m.add_constraints(
+        built_wind <= (xr_ref['AVA_Wind'] * 10000)
+        ,name = 'constr_builtarea_wind'
+    )
 
-constr_maxcap_solar = m.add_constraints(
-    cap_solar <= (built_solar * (xr_ref['AVA_Solar'].rolling(lon = rollingwindow_solar, lat = rollingwindow_solar, min_periods=1,center=True).sum() * mwperkm2_solar))
-    ,name = 'constr_maxcap_solar'
-)
-# constr_mincap_solar = m.add_constraints(
-#     cap_solar >= (built_solar * 1)
-#     ,name = 'constr_mincap_solar'
-# )
-constr_builtarea_solar = m.add_constraints(
-    built_solar <= (xr_ref['AVA_Solar'] * 10000)
-    ,name = 'constr_builtarea_solar'
-)
+if built_solar is not None:
+    constr_maxcap_solar = m.add_constraints(
+        cap_solar <= (built_solar * (xr_ref['AVA_Solar'].rolling(lon = rollingwindow_solar, lat = rollingwindow_solar, min_periods=1,center=True).sum() * mwperkm2_solar))
+        ,name = 'constr_maxcap_solar'
+    )
+    constr_builtarea_solar = m.add_constraints(
+        built_solar <= (xr_ref['AVA_Solar'] * 10000)
+        ,name = 'constr_builtarea_solar'
+    )
 
-constr_maxcap_biomass = m.add_constraints(
-    cap_biomass <= (built_biomass * (xr_ref['A_Biomass'].rolling(lon = rollingwindow_biomass, lat = rollingwindow_biomass, min_periods=1,center=True).sum()))
-    ,name = 'constr_maxcap_biomass'
-)
-# constr_mincap_biomass = m.add_constraints(
-#     cap_biomass >= (built_biomass * 1)
-#     ,name = 'constr_mincap_biomass'
-# )
-constr_builtarea_biomass = m.add_constraints(
-    built_biomass <= (xr_ref['AVA_Biomass'] * 10000)
-    ,name = 'constr_builtarea_biomass'
-)
+if built_biomass is not None:
+    constr_maxcap_biomass = m.add_constraints(
+        cap_biomass <= (built_biomass * (xr_ref['A_Biomass'].rolling(lon = rollingwindow_biomass, lat = rollingwindow_biomass, min_periods=1,center=True).sum()))
+        ,name = 'constr_maxcap_biomass'
+    )
+    constr_builtarea_biomass = m.add_constraints(
+        built_biomass <= (xr_ref['AVA_Biomass'] * 10000)
+        ,name = 'constr_builtarea_biomass'
+    )
 
-constr_maxcap_bgec = m.add_constraints(
-    cap_bgec <= (built_bgec * (xr_ref['A_BGEC'].rolling(lon = rollingwindow_bgec, lat = rollingwindow_bgec, min_periods=1,center=True).sum()))
-    ,name = 'constr_maxcap_bgec'
-)
-# constr_mincap_bgec = m.add_constraints(
-#     cap_bgec >= (built_bgec * 1)
-#     ,name = 'constr_mincap_bgec'
-# )
-constr_builtarea_bgec = m.add_constraints(
-    built_bgec <= (xr_ref['AVA_BGEC'] * 10000)
-    ,name = 'constr_builtarea_bgec'
-)
+if built_bgec is not None:
+    constr_maxcap_bgec = m.add_constraints(
+        cap_bgec <= (built_bgec * (xr_ref['A_BGEC'].rolling(lon = rollingwindow_bgec, lat = rollingwindow_bgec, min_periods=1,center=True).sum()))
+        ,name = 'constr_maxcap_bgec'
+    )
+    constr_builtarea_bgec = m.add_constraints(
+        built_bgec <= (xr_ref['AVA_BGEC'] * 10000)
+        ,name = 'constr_builtarea_bgec'
+    )
 
-constr_maxcap_msw = m.add_constraints(
-    cap_msw <= ((built_msw) * (xr_ref['A_MSW'].rolling(lon = rollingwindow_msw, lat = rollingwindow_msw, min_periods=1,center=True).sum()))
-    ,name = 'constr_maxcap_msw'
-)
-# constr_mincap_msw = m.add_constraints(
-#     cap_msw >= ((built_msw) * 1)
-#     ,name = 'constr_mincap_msw'
-# )
-constr_builtarea_msw = m.add_constraints(
-    built_msw <= (xr_ref['AVA_MSW'] * 10000)
-    ,name = 'constr_builtarea_msw'
-)
+if built_msw is not None:
+    constr_maxcap_msw = m.add_constraints(
+        cap_msw <= ((built_msw) * (xr_ref['A_MSW'].rolling(lon = rollingwindow_msw, lat = rollingwindow_msw, min_periods=1,center=True).sum()))
+        ,name = 'constr_maxcap_msw'
+    )
+    constr_builtarea_msw = m.add_constraints(
+        built_msw <= (xr_ref['AVA_MSW'] * 10000)
+        ,name = 'constr_builtarea_msw'
+    )
 ############################################ Constraint Capacity ##############################################################################
 
 ###########################################################################################################################################################
 
-cap_vars = {
-    'wind': cap_wind,
-    'solar': cap_solar,
-    'biomass': cap_biomass,
-    'bgec': cap_bgec,
-    'msw': cap_msw
-}
+cap_vars = {}
+if cap_wind is not None: cap_vars['wind'] = cap_wind
+if cap_solar is not None: cap_vars['solar'] = cap_solar
+if cap_biomass is not None: cap_vars['biomass'] = cap_biomass
+if cap_bgec is not None: cap_vars['bgec'] = cap_bgec
+if cap_msw is not None: cap_vars['msw'] = cap_msw
 
 if enforce_total_quota:
     for tech, cap_var in cap_vars.items():

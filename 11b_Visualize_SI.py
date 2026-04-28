@@ -22,6 +22,7 @@ def generate_interactive_si_maps():
         '7. Dist to Substation': ('xr_SI_Distancetosubstation.nc', 'SI_DtoSubs'),
         '8. Resource Potential': ('xr_SI_resourcepotential.nc', 'SI_{t}'),
         '9. Land Cost': ('xr_SI_LandCost.nc', 'land_cost_avg_price_norm'),
+        '10. Farm/Feedstock Area': ('xr_SI_Farmarea.nc', 'SI_{t}'),
     }
     
     techs = ['Wind', 'Solar', 'Biomass', 'BGEC', 'BGWW', 'MSW', 'IEW']

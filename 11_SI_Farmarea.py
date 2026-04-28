@@ -25,11 +25,11 @@ def process_farm_area_suitability():
     weights = {
         'Wind':    [0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909],
         'Solar':   [0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909, 0.0909],
-        'Biomass': [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.0],
-        'BGEC':    [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.0],
-        'BGWW':    [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.0],
-        'MSW':     [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.0],
-        'IEW':     [0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.1,    0.0],
+        'Biomass': [0.125,  0.125,  0.125,  0.125,  0.125,  0.0,    0.125,  0.125,  0.0,    0.125,  0.0],
+        'BGEC':    [0.125,  0.125,  0.125,  0.125,  0.125,  0.0,    0.125,  0.125,  0.0,    0.125,  0.0],
+        'BGWW':    [0.125,  0.125,  0.125,  0.125,  0.125,  0.0,    0.125,  0.125,  0.0,    0.125,  0.0],
+        'MSW':     [0.125,  0.125,  0.125,  0.125,  0.125,  0.0,    0.125,  0.125,  0.0,    0.125,  0.0],
+        'IEW':     [0.125,  0.125,  0.125,  0.125,  0.125,  0.0,    0.125,  0.125,  0.0,    0.125,  0.0],
     }
 
     # --- STEP 0: Initialization & Landcover ---
@@ -87,16 +87,21 @@ def process_farm_area_suitability():
     rolgrid_wind = int(np.ceil(np.sqrt(suitablearea_wind / areapergrid)))
     rolgrid_solar = int(np.ceil(np.sqrt(suitablearea_solar / areapergrid)))
 
+    # Initialize Dataset to store the separated Farm Area SIs
+    xr_farmarea = xr.Dataset(coords=xr_final_SI.coords)
+
     # Wind Farm Area
     fra_wind = xr_final_SI['AVA_Wind'].rolling(lon=rolgrid_wind, lat=rolgrid_wind, min_periods=1, center=True).sum()
     fra_wind = xr.where(xr_final_SI['AVA_Wind'] == 0, 0, fra_wind)
     fra_wind = xr.where(fra_wind >= suitablearea_wind, 3, 0)
+    xr_farmarea['SI_Wind'] = fra_wind.astype(np.float32)
     xr_final_SI['SI_Wind'] += fra_wind * weights['Wind'][10]
 
     # Solar Farm Area
     fra_solar = xr_final_SI['AVA_Solar'].rolling(lon=rolgrid_solar, lat=rolgrid_solar, min_periods=1, center=True).sum()
     fra_solar = xr.where(xr_final_SI['AVA_Solar'] == 0, 0, fra_solar)
     fra_solar = xr.where(fra_solar >= suitablearea_solar, 3, 0)
+    xr_farmarea['SI_Solar'] = fra_solar.astype(np.float32)
     xr_final_SI['SI_Solar'] += fra_solar * weights['Solar'][10]
 
     # --- Feedstock Area for fuel-based plant ---
@@ -125,8 +130,14 @@ def process_farm_area_suitability():
         fra_si_bio = xr.where((cal_si_bio >= 100) & (cal_si_bio < suitablearea_bio), 2, fra_si_bio)
         fra_si_bio = xr.where(cal_si_bio < 100, 0, fra_si_bio)
 
+        xr_farmarea[f'SI_{t}'] = fra_si_bio.astype(np.float32)
         xr_final_SI[f'SI_{t}'] += fra_si_bio * weights[t][10]
         xr_final_SI[f'SI_{t}'] = xr.where(xr_final_SI[f'AVA_{t}'] == 0, 0, xr_final_SI[f'SI_{t}'])
+
+    farmarea_output_path = output_dir / "xr_SI_Farmarea.nc"
+    print(f"Saving Farm Area SI to {farmarea_output_path}...")
+    xr_farmarea.to_netcdf(path=farmarea_output_path)
+    xr_farmarea.close()
 
     # Print Output Summary
     print("\n--- Processing Summary ---")
