@@ -7,9 +7,9 @@ from pathlib import Path
 from shapely import wkt
 import numpy as np
 import folium
-
+ 
 ###################### Config ################################################################################################
-coarsenscale = 5
+coarsenscale = 20
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -20,16 +20,16 @@ mwperkm2_solar = 15 ## originally 30 MW/km2 but deduct by 50% of the technically
 mwpergrid_wind = np.round(areapergrid * mwperkm2_wind,2)
 mwpergrid_solar =  np.round(areapergrid * mwperkm2_solar,2)
 
-target_capacity_mw = 90
+target_capacity_mw = 45
 suitablearea_wind = target_capacity_mw / mwperkm2_wind
 suitablearea_solar = target_capacity_mw / mwperkm2_solar
 
 rollingwindow_wind = int(np.ceil(np.sqrt(suitablearea_wind/areapergrid)))
 rollingwindow_solar = int(np.ceil(np.sqrt(suitablearea_solar/areapergrid)))
 
-suitablearea_biomass = 2500 ## km2 
-suitablearea_bgec = 2500 ## km2
-suitablearea_msw = 2500 ## km2
+suitablearea_biomass = 100 ## km2 
+suitablearea_bgec = 100 ## km2
+suitablearea_msw = 100 ## km2
 
 rollingwindow_biomass = int(np.ceil(np.sqrt(suitablearea_biomass/areapergrid)))
 rollingwindow_bgec = int(np.ceil(np.sqrt(suitablearea_bgec/areapergrid)))
@@ -191,11 +191,11 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R1': 6582, 'R2': 16540, 'R3': 1678, 'R4': 2320},
-    'solar': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'biomass': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'bgec': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'msw': {'R0': 0, 'R1': 0, 'R2': 0, 'R3': 0, 'R4': 0}
+    'wind': {'R0': 0, 'R10': 4100, 'R11': 2050, 'R12': 2050, 'R2': 17000, 'R3': 1350, 'R4': 2250},
+    'solar': {'R0': 300, 'R10': 4000, 'R11': 4600, 'R12': 4600, 'R2': 25000, 'R3': 10000, 'R4': 15000},
+    'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
+    'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
+    'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
 }
 
 quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.items()}
@@ -204,6 +204,43 @@ for tech, total in quota_totals.items():
     print(f"quota_{tech}_total = {total}")
 
 ####### PDP ############################################################
+
+print("\n--- Pre-Optimization Quota Feasibility Check ---")
+infeasible_precheck = False
+
+def get_avail_cap(t, r):
+    mask = xr_ref['region'] == r
+    if t == 'wind': return float(xr_ref['AVA_Wind'].where(mask, drop=True).sum() * mwperkm2_wind)
+    elif t == 'solar': return float(xr_ref['AVA_Solar'].where(mask, drop=True).sum() * mwperkm2_solar)
+    elif t == 'biomass': return float(xr_ref['A_Biomass'].where(mask, drop=True).sum())
+    elif t == 'bgec': return float(xr_ref['A_BGEC'].where(mask, drop=True).sum())
+    elif t == 'msw': return float(xr_ref['A_MSW'].where(mask, drop=True).sum())
+    return 0.0
+
+if enforce_regional_quota:
+    for tech, reg_quotas in quotas.items():
+        for reg, q_val in reg_quotas.items():
+            if q_val > 0:
+                avail = get_avail_cap(tech, reg)
+                if q_val > avail:
+                    print(f"  [!] WARNING: {tech.upper()} in {reg} requests {q_val} MW but only ~{avail:.2f} MW is physically available!")
+                    infeasible_precheck = True
+                else:
+                    print(f"  [OK] {tech.upper()} in {reg} requests {q_val} MW (Max Available: ~{avail:.2f} MW)")
+
+if enforce_total_quota:
+    for tech, total_q in quota_totals.items():
+        if total_q > 0:
+            avail_total = sum(get_avail_cap(tech, r) for r in quotas[tech].keys())
+            if total_q > avail_total:
+                print(f"  [!] WARNING: {tech.upper()} TOTAL requests {total_q} MW but only ~{avail_total:.2f} MW is physically available!")
+                infeasible_precheck = True
+
+if infeasible_precheck:
+    print(">>> SOME QUOTAS EXCEED AVAILABLE CAPACITY. The model is structurally infeasible and will use slack variables or fail. <<<")
+else:
+    print(">>> All requested quotas are within theoretical maximum available limits. <<<")
+print("------------------------------------------------\n")
 
 ######################## model #####################################################
 m = linopy.Model()
@@ -344,8 +381,25 @@ m.solve(solver_name='highs',
         mip_rel_gap = 0.1,
         )
 
-print('aftersolve = ',m)
+print('Solver status =', m.status)
 solution = m.solution
+
+print("\n--- Quota Feasibility Diagnostics ---")
+infeasible_quotas_found = False
+if solution is not None:
+    for var_name in solution.data_vars:
+        if var_name.startswith('slack_'):
+            val = float(solution[var_name].item())
+            if val > 0.01:  # Allow for tiny float precision noise
+                print(f"INFEASIBILITY DETECTED: '{var_name}' is short by {val:.2f} MW")
+                infeasible_quotas_found = True
+    if not infeasible_quotas_found:
+        print("All quotas were met successfully! The model is fully feasible.")
+else:
+    print("No solution returned. Infeasibility may stem from other non-quota constraints.")
+print("-------------------------------------\n")
+
+print('aftersolve = ',m)
 solution = solution.fillna(0)
 print(solution)
 
@@ -379,35 +433,45 @@ xr_ref['rolling_avg_SI_MSW'] = xr_ref['SI_MSW'].rolling(lon=rollingwindow_msw, l
 
 print("cap_wind = ",xr_ref['cap_wind'].sum())
 print("  R0 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R0').sum())
-print("  R1 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R1').sum())
+print("  R10 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R10').sum())
+print("  R11 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R11').sum())
+print("  R12 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R12').sum())
 print("  R2 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R2').sum())
 print("  R3 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R4').sum())
 
 print("cap_solar = ",xr_ref['cap_solar'].sum())
 print("  R0 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R0').sum())
-print("  R1 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R1').sum())
+print("  R10 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R10').sum())
+print("  R11 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R11').sum())
+print("  R12 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R12').sum())
 print("  R2 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R2').sum())
 print("  R3 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_solar = ",xr_ref['cap_solar'].where(xr_ref['region'] == 'R4').sum())
 
 print("cap_biomass = ",xr_ref['cap_biomass'].sum())
 print("  R0 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R0').sum())
-print("  R1 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R1').sum())
+print("  R10 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R10').sum())
+print("  R11 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R11').sum())
+print("  R12 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R12').sum())
 print("  R2 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R2').sum())
 print("  R3 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_biomass = ",xr_ref['cap_biomass'].where(xr_ref['region'] == 'R4').sum())
 
 print("cap_bgec = ",xr_ref['cap_bgec'].sum())
 print("  R0 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R0').sum())
-print("  R1 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R1').sum())
+print("  R10 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R10').sum())
+print("  R11 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R11').sum())
+print("  R12 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R12').sum())
 print("  R2 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R2').sum())
 print("  R3 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_bgec = ",xr_ref['cap_bgec'].where(xr_ref['region'] == 'R4').sum())
 
 print("cap_msw = ",xr_ref['cap_msw'].sum())
 print("  R0 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R0').sum())
-print("  R1 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R1').sum())
+print("  R10 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R10').sum())
+print("  R11 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R11').sum())
+print("  R12 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R12').sum())
 print("  R2 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R2').sum())
 print("  R3 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R4').sum())
@@ -509,9 +573,21 @@ for tech, tech_label, cmap, window, extra_tips in tech_configs:
     gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df['Longitude'], df['Latitude']))
     gdf = gdf.set_crs("EPSG:4326")
 
-    # Project, buffer to squares, and project back
-    buffer_m = (window * lccs_resolution) / 2
     gdf = gdf.to_crs("EPSG:32647")
+    
+    # Adaptive buffer calculation based on actual capacity
+    if tech == 'wind':
+        area_km2 = gdf['Capacity (MW)'] / mwperkm2_wind
+    elif tech == 'solar':
+        area_km2 = gdf['Capacity (MW)'] / mwperkm2_solar
+    elif tech == 'biomass':
+        area_km2 = (gdf['Capacity (MW)'] / float(maxcap_biomass)) * suitablearea_biomass
+    elif tech == 'bgec':
+        area_km2 = (gdf['Capacity (MW)'] / float(maxcap_bgec)) * suitablearea_bgec
+    elif tech == 'msw':
+        area_km2 = (gdf['Capacity (MW)'] / float(maxcap_msw)) * suitablearea_msw
+        
+    buffer_m = (np.sqrt(area_km2) * 1000) / 2
     gdf.geometry = gdf.geometry.buffer(buffer_m, cap_style=3)
     gdf = gdf.to_crs("EPSG:4326")
 
