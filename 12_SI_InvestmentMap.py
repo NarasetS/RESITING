@@ -2,14 +2,17 @@ import linopy
 import pandas as pd
 import xarray as xr
 import geopandas as gpd
-import matplotlib.pyplot as plt
-from pathlib import Path
-from shapely import wkt
 import numpy as np
 import folium
+from pathlib import Path
  
-###################### Config ################################################################################################
-coarsenscale = 20
+# ======================================================================================================================
+# 1. Configuration
+# ----------------------------------------------------------------------------------------------------------------------
+# Grid resolution, technology density assumptions, plant footprint size, and rolling-window sizes.
+# The rolling window represents the area around a candidate plant center that is considered part of the plant footprint.
+# ======================================================================================================================
+coarsenscale = 10
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -20,9 +23,13 @@ mwperkm2_solar = 15 ## originally 30 MW/km2 but deduct by 50% of the technically
 mwpergrid_wind = np.round(areapergrid * mwperkm2_wind,2)
 mwpergrid_solar =  np.round(areapergrid * mwperkm2_solar,2)
 
-target_capacity_mw = 45
+target_capacity_mw = 90
 suitablearea_wind = target_capacity_mw / mwperkm2_wind
 suitablearea_solar = target_capacity_mw / mwperkm2_solar
+
+run_name = f'SSI_{scenario_SI}_CS_{coarsenscale}_TC_{target_capacity_mw}MW'
+output_dir = Path('Output') / run_name
+output_dir.mkdir(parents=True, exist_ok=True)
 
 rollingwindow_wind = int(np.ceil(np.sqrt(suitablearea_wind/areapergrid)))
 rollingwindow_solar = int(np.ceil(np.sqrt(suitablearea_solar/areapergrid)))
@@ -44,6 +51,19 @@ print('rollingwindow_biomass = ',rollingwindow_biomass,' * ',rollingwindow_bioma
 print('rollingwindow_bgec = ',rollingwindow_bgec,' * ',rollingwindow_bgec)
 print('rollingwindow_msw = ',rollingwindow_msw,' * ',rollingwindow_msw)
 
+# Shared rolling helpers. Keeping these centralized avoids repeated long rolling expressions later in the model.
+def rolling_sum(da, window):
+    return da.rolling(lon=window, lat=window, min_periods=1, center=True).sum()
+
+def rolling_mean_positive(da, window):
+    return da.where(da > 0).rolling(lon=window, lat=window, min_periods=1, center=True).mean().fillna(0)
+
+# ======================================================================================================================
+# 2. Load and Preprocess Suitability Data
+# ----------------------------------------------------------------------------------------------------------------------
+# Apply the SI threshold, remove availability where SI is zero, coarsen the raster grid, and preserve selected min/max
+# SI diagnostics from the original resolution.
+# ======================================================================================================================
 xr_final_SI_raw = xr.open_dataset('Output\\xr_final_SI_all.nc')
 xr_final_SI_raw = xr_final_SI_raw.drop_vars('ADM1_EN')
 # xr_final_SI_raw = xr_final_SI_raw.drop_vars('SI_BGEC')
@@ -81,17 +101,47 @@ for var in xr_final_SI.data_vars:
     if var.startswith('SI_'):
         xr_final_SI[var] = xr_final_SI[var] / (coarsenscale**2)
 
-######## Find min/max SI within cell #############
+# Preserve within-cell SI spread after coarsening for wind and solar diagnostics.
 xr_final_SI['SI_Wind_max'] = xr_final_SI_raw['SI_Wind'].coarsen(lat = coarsenscale, lon= coarsenscale, boundary='trim').max()
 xr_final_SI['SI_Wind_min'] = xr_final_SI_raw['SI_Wind'].coarsen(lat = coarsenscale, lon= coarsenscale, boundary='trim').min()
 xr_final_SI['SI_Solar_max'] = xr_final_SI_raw['SI_Solar'].coarsen(lat = coarsenscale, lon= coarsenscale, boundary='trim').max()
 xr_final_SI['SI_Solar_min'] = xr_final_SI_raw['SI_Solar'].coarsen(lat = coarsenscale, lon= coarsenscale, boundary='trim').min()
 
-maxcap_wind = xr_final_SI['AVA_Wind'].rolling(lon = rollingwindow_wind, lat = rollingwindow_wind, min_periods=1,center=True).sum().where(xr_final_SI['SI_Wind']>0).max()
-maxcap_solar = xr_final_SI['AVA_Solar'].rolling(lon = rollingwindow_solar, lat = rollingwindow_solar, min_periods=1,center=True).sum().where(xr_final_SI['SI_Solar']>0).max()
-maxcap_biomass = xr_final_SI['A_Biomass'].rolling(lon = rollingwindow_biomass, lat = rollingwindow_biomass, min_periods=1,center=True).sum().where(xr_final_SI['SI_Biomass']>0).max()
-maxcap_bgec = xr_final_SI['A_BGEC'].rolling(lon = rollingwindow_bgec, lat = rollingwindow_bgec, min_periods=1,center=True).sum().where(xr_final_SI['SI_BGEC']>0).max()
-maxcap_msw = xr_final_SI['A_MSW'].rolling(lon = rollingwindow_msw, lat = rollingwindow_msw, min_periods=1,center=True).sum().where(xr_final_SI['SI_MSW']>0).max()
+# ======================================================================================================================
+# 3. Cache Rolling Footprint Metrics
+# ----------------------------------------------------------------------------------------------------------------------
+# These arrays are reused in max-capacity checks, constraints, objective scoring, CSV export, and mapping.
+# rolling_cap_* is in MW for wind/solar and in the native capacity units for biomass/BGEC/MSW.
+# rolling_avg_SI_* averages only cells with SI > 0 inside the footprint.
+# ======================================================================================================================
+tech_settings = {
+    'wind': {'label': 'Wind', 'si': 'SI_Wind', 'ava': 'AVA_Wind', 'cap_source': 'AVA_Wind', 'density': mwperkm2_wind, 'window': rollingwindow_wind},
+    'solar': {'label': 'Solar', 'si': 'SI_Solar', 'ava': 'AVA_Solar', 'cap_source': 'AVA_Solar', 'density': mwperkm2_solar, 'window': rollingwindow_solar},
+    'biomass': {'label': 'Biomass', 'si': 'SI_Biomass', 'ava': 'AVA_Biomass', 'cap_source': 'A_Biomass', 'window': rollingwindow_biomass},
+    'bgec': {'label': 'BGEC', 'si': 'SI_BGEC', 'ava': 'AVA_BGEC', 'cap_source': 'A_BGEC', 'window': rollingwindow_bgec},
+    'msw': {'label': 'MSW', 'si': 'SI_MSW', 'ava': 'AVA_MSW', 'cap_source': 'A_MSW', 'window': rollingwindow_msw},
+}
+
+for settings in tech_settings.values():
+    label = settings['label']
+    window = settings['window']
+    si = xr_final_SI[settings['si']]
+    rolling_cap = rolling_sum(xr_final_SI[settings['cap_source']], window)
+    if 'density' in settings:
+        rolling_cap = rolling_cap * settings['density']
+    xr_final_SI[f'rolling_AVA_{label}'] = rolling_sum(xr_final_SI[settings['ava']], window)
+    xr_final_SI[f'rolling_cap_{label}'] = rolling_cap
+    xr_final_SI[f'rolling_avg_SI_{label}'] = rolling_mean_positive(si, window)
+
+xr_final_SI['rolling_sum_SI_Wind'] = rolling_sum(xr_final_SI['SI_Wind'], rollingwindow_wind)
+xr_final_SI['rolling_sum_SI_Solar'] = rolling_sum(xr_final_SI['SI_Solar'], rollingwindow_solar)
+
+# Maximum candidate footprint capacity by technology. These are used mainly for diagnostics and visualization scaling.
+maxcap_wind = xr_final_SI['rolling_cap_Wind'].where(xr_final_SI['SI_Wind']>0).max()
+maxcap_solar = xr_final_SI['rolling_cap_Solar'].where(xr_final_SI['SI_Solar']>0).max()
+maxcap_biomass = xr_final_SI['rolling_cap_Biomass'].where(xr_final_SI['SI_Biomass']>0).max()
+maxcap_bgec = xr_final_SI['rolling_cap_BGEC'].where(xr_final_SI['SI_BGEC']>0).max()
+maxcap_msw = xr_final_SI['rolling_cap_MSW'].where(xr_final_SI['SI_MSW']>0).max()
 print('maxcap_wind = ',maxcap_wind)
 print('maxcap_solar = ',maxcap_solar)
 print('maxcap_biomass = ',maxcap_biomass)
@@ -111,23 +161,19 @@ print('Max SI_Solar = ',xr_final_SI['SI_Solar'].max())
 print('Max SI_Biomass = ',xr_final_SI['SI_Biomass'].max())
 print('Max SI_BGEC = ',xr_final_SI['SI_BGEC'].max())
 print('Max SI_MSW = ',xr_final_SI['SI_MSW'].max())
-###################### Config ################################################################################################
 
-######### Next I assign Region to xarray ################################################################################
+# ======================================================================================================================
+# 4. Assign Planning Regions to Grid Cells
+# ----------------------------------------------------------------------------------------------------------------------
+# Spatially join each coarsened grid-cell centroid to the provincial boundary layer, then attach the region label.
+# ======================================================================================================================
 region = pd.read_csv('Data\\Region.csv')
 thailandmap = gpd.read_file('Data\\tha_admbnda_adm1_rtsd_20220121\\tha_admbnda_adm1_rtsd_20220121.shp')
 thailandmap.crs = "EPSG:4326"
-list_region = []
-count = 0
-for i in thailandmap['ADM1_TH']:
-    r = region['region'].loc[region['province'] == i]
-    try : 
-        # print(i,r.values[0])
-        list_region.append(r.values[0])
-    except :
-        print(i,'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
-        list_region.append('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
-thailandmap['region'] = list_region
+region_lookup = region.set_index('province')['region']
+thailandmap['region'] = thailandmap['ADM1_TH'].map(region_lookup).fillna('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+for missing_province in thailandmap.loc[thailandmap['region'] == 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'ADM1_TH']:
+    print(missing_province,'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
 # thailandmap['center'] = thailandmap['geometry'].centroid
 # thailandmap = thailandmap.set_geometry('center')
 thailandmap = thailandmap.set_geometry('geometry')
@@ -160,9 +206,12 @@ df_final_SI_2 = df_final_SI_2.drop(columns=['index'])
 df_final_SI_2.reset_index(inplace= True, drop = True)
 df_final_SI_2 = df_final_SI_2.set_index(['lat', 'lon'])
 xr_final_SI = xr.Dataset.from_dataframe(df_final_SI_2)
-#########################################################################################
 
-###################### Summary ################################################################################################
+# ======================================================================================================================
+# 5. Dataset Summary
+# ----------------------------------------------------------------------------------------------------------------------
+# Print sanity checks before building the optimization model.
+# ======================================================================================================================
 xr_ref = xr_final_SI
 print("AVA Wind = ",xr_ref['AVA_Wind'].sum())
 print("AVA Solar = ",xr_ref['AVA_Solar'].sum()) 
@@ -183,15 +232,17 @@ print('coarsenscale = ',coarsenscale)
 print('areapergrid = ',areapergrid)
 print('mwpergrid_wind = ',mwpergrid_wind)
 print('mwpergrid_solar = ',mwpergrid_solar)
-###################### Summary ################################################################################################
 
-####### PDP Quotas ############################################################
-# Toggles to enable or disable quotas
+# ======================================================================================================================
+# 6. PDP Capacity Quotas
+# ----------------------------------------------------------------------------------------------------------------------
+# These quotas drive the capacity that must be allocated by technology and region.
+# ======================================================================================================================
 enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R10': 4100, 'R11': 2050, 'R12': 2050, 'R2': 17000, 'R3': 1350, 'R4': 2250},
+    'wind': {'R0': 0, 'R10': 3000, 'R11': 1840, 'R12': 1220, 'R2': 10940, 'R3': 800, 'R4': 2200},
     'solar': {'R0': 300, 'R10': 4000, 'R11': 4600, 'R12': 4600, 'R2': 25000, 'R3': 10000, 'R4': 15000},
     'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
     'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
@@ -203,19 +254,31 @@ quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.it
 for tech, total in quota_totals.items():
     print(f"quota_{tech}_total = {total}")
 
-####### PDP ############################################################
-
+# ======================================================================================================================
+# 7. Pre-Optimization Feasibility Check
+# ----------------------------------------------------------------------------------------------------------------------
+# Check whether requested quotas exceed physically available capacity by region or in total.
+# This does not prove the MIP is feasible, but it catches obvious quota problems early.
+# ======================================================================================================================
 print("\n--- Pre-Optimization Quota Feasibility Check ---")
 infeasible_precheck = False
 
+avail_sources = {
+    'wind': ('AVA_Wind', mwperkm2_wind),
+    'solar': ('AVA_Solar', mwperkm2_solar),
+    'biomass': ('A_Biomass', 1),
+    'bgec': ('A_BGEC', 1),
+    'msw': ('A_MSW', 1),
+}
+region_available = {}
+for tech, (source_var, multiplier) in avail_sources.items():
+    region_available[tech] = {}
+    for region_name in quotas[tech].keys():
+        mask = xr_ref['region'] == region_name
+        region_available[tech][region_name] = float(xr_ref[source_var].where(mask, drop=True).sum() * multiplier)
+
 def get_avail_cap(t, r):
-    mask = xr_ref['region'] == r
-    if t == 'wind': return float(xr_ref['AVA_Wind'].where(mask, drop=True).sum() * mwperkm2_wind)
-    elif t == 'solar': return float(xr_ref['AVA_Solar'].where(mask, drop=True).sum() * mwperkm2_solar)
-    elif t == 'biomass': return float(xr_ref['A_Biomass'].where(mask, drop=True).sum())
-    elif t == 'bgec': return float(xr_ref['A_BGEC'].where(mask, drop=True).sum())
-    elif t == 'msw': return float(xr_ref['A_MSW'].where(mask, drop=True).sum())
-    return 0.0
+    return region_available.get(t, {}).get(r, 0.0)
 
 if enforce_regional_quota:
     for tech, reg_quotas in quotas.items():
@@ -242,7 +305,13 @@ else:
     print(">>> All requested quotas are within theoretical maximum available limits. <<<")
 print("------------------------------------------------\n")
 
-######################## model #####################################################
+# ======================================================================================================================
+# 8. Build Optimization Model
+# ----------------------------------------------------------------------------------------------------------------------
+# built_* is a binary decision: whether a plant center is selected at a grid cell.
+# cap_* is a continuous decision: how much capacity is assigned to that selected cell.
+# Variables are only created for technologies with positive total quota.
+# ======================================================================================================================
 m = linopy.Model()
 
 built_wind = m.add_variables(binary=True, coords=xr_ref.coords, name='built_wind') if quota_totals['wind'] > 0 else None
@@ -260,7 +329,11 @@ cap_bgec = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_bgec') if
 built_msw = m.add_variables(binary=True, coords=xr_ref.coords, name='built_msw') if quota_totals['msw'] > 0 else None
 cap_msw = m.add_variables(lower=0.00, coords=xr_ref.coords, name='cap_msw') if quota_totals['msw'] > 0 else None
 
-############################################ Constraint Building Location Logic ##############################################################################
+# ----------------------------------------------------------------------------------------------------------------------
+# 8a. Location Exclusion Constraint
+# One selected plant footprint can occupy a rolling window. The combined rolling sum across technologies must stay <= 1,
+# which prevents overlapping/too-close plant centers across all active technologies.
+# ----------------------------------------------------------------------------------------------------------------------
 built_terms = []
 if built_wind is not None:
     built_terms.append(built_wind.rolling(lat = rollingwindow_wind,min_periods=1,center=True).sum().rolling(lon = rollingwindow_wind,min_periods=1,center=True).sum())
@@ -275,12 +348,15 @@ if built_msw is not None:
 
 if built_terms:
     constr_built_logic = m.add_constraints(sum(built_terms) <= 1, name='constr_built_logic')
-############################################ Constraint Building Location Logic ##############################################################################
 
-############################################ Constraint Capacity ##############################################################################
+# ----------------------------------------------------------------------------------------------------------------------
+# 8b. Capacity Upper Bounds
+# Capacity can only be assigned where built_* = 1, and it cannot exceed the rolling footprint capacity at that location.
+# The builtarea constraints also force plant centers onto cells with available area/feedstock.
+# ----------------------------------------------------------------------------------------------------------------------
 if built_wind is not None:
     constr_maxcap_wind = m.add_constraints(
-        cap_wind <= (built_wind * (xr_ref['AVA_Wind'].rolling(lon = rollingwindow_wind, lat = rollingwindow_wind, min_periods=1,center=True).sum() * mwperkm2_wind))
+        cap_wind <= (built_wind * xr_ref['rolling_cap_Wind'])
         ,name = 'constr_maxcap_wind'
     )
     constr_builtarea_wind = m.add_constraints(
@@ -290,7 +366,7 @@ if built_wind is not None:
 
 if built_solar is not None:
     constr_maxcap_solar = m.add_constraints(
-        cap_solar <= (built_solar * (xr_ref['AVA_Solar'].rolling(lon = rollingwindow_solar, lat = rollingwindow_solar, min_periods=1,center=True).sum() * mwperkm2_solar))
+        cap_solar <= (built_solar * xr_ref['rolling_cap_Solar'])
         ,name = 'constr_maxcap_solar'
     )
     constr_builtarea_solar = m.add_constraints(
@@ -300,7 +376,7 @@ if built_solar is not None:
 
 if built_biomass is not None:
     constr_maxcap_biomass = m.add_constraints(
-        cap_biomass <= (built_biomass * (xr_ref['A_Biomass'].rolling(lon = rollingwindow_biomass, lat = rollingwindow_biomass, min_periods=1,center=True).sum()))
+        cap_biomass <= (built_biomass * xr_ref['rolling_cap_Biomass'])
         ,name = 'constr_maxcap_biomass'
     )
     constr_builtarea_biomass = m.add_constraints(
@@ -310,7 +386,7 @@ if built_biomass is not None:
 
 if built_bgec is not None:
     constr_maxcap_bgec = m.add_constraints(
-        cap_bgec <= (built_bgec * (xr_ref['A_BGEC'].rolling(lon = rollingwindow_bgec, lat = rollingwindow_bgec, min_periods=1,center=True).sum()))
+        cap_bgec <= (built_bgec * xr_ref['rolling_cap_BGEC'])
         ,name = 'constr_maxcap_bgec'
     )
     constr_builtarea_bgec = m.add_constraints(
@@ -320,17 +396,20 @@ if built_bgec is not None:
 
 if built_msw is not None:
     constr_maxcap_msw = m.add_constraints(
-        cap_msw <= ((built_msw) * (xr_ref['A_MSW'].rolling(lon = rollingwindow_msw, lat = rollingwindow_msw, min_periods=1,center=True).sum()))
+        cap_msw <= (built_msw * xr_ref['rolling_cap_MSW'])
         ,name = 'constr_maxcap_msw'
     )
     constr_builtarea_msw = m.add_constraints(
         built_msw <= (xr_ref['AVA_MSW'] * 10000)
         ,name = 'constr_builtarea_msw'
     )
-############################################ Constraint Capacity ##############################################################################
 
-###########################################################################################################################################################
-
+# ----------------------------------------------------------------------------------------------------------------------
+# 8c. Quota Constraints
+# Total quotas require each technology to hit its target. Regional quotas distribute that target across planning regions.
+# With total equality active, the regional >= constraints behave like exact regional allocations when region quotas sum
+# to the total quota.
+# ----------------------------------------------------------------------------------------------------------------------
 cap_vars = {}
 if cap_wind is not None: cap_vars['wind'] = cap_wind
 if cap_solar is not None: cap_vars['solar'] = cap_solar
@@ -354,27 +433,30 @@ if enforce_regional_quota:
                 name=f'constr_quota_{tech}_{region_name}'
             )
 
-##########################################################################################################################################################
-
-###################### Objective function ################################################################################################
+# ----------------------------------------------------------------------------------------------------------------------
+# 8d. Objective Function
+# Minimize the negative score, which is equivalent to maximizing capacity-weighted average SI.
+# rolling_avg_SI_* excludes zero-SI cells inside the rolling footprint and returns 0 for all-zero windows.
+# ----------------------------------------------------------------------------------------------------------------------
 obj_terms = []
 if quota_totals['wind'] > 0:
-    obj_terms.append(xr_ref['SI_Wind'].rolling(lon=rollingwindow_wind, lat=rollingwindow_wind, min_periods=1, center=True).sum() * (cap_wind / maxcap_wind))
+    obj_terms.append(xr_ref['rolling_avg_SI_Wind'] * cap_wind)
 if quota_totals['solar'] > 0:
-    obj_terms.append(xr_ref['SI_Solar'].rolling(lon=rollingwindow_solar, lat=rollingwindow_solar, min_periods=1, center=True).sum() * (cap_solar / maxcap_solar))
+    obj_terms.append(xr_ref['rolling_avg_SI_Solar'] * cap_solar)
 if quota_totals['biomass'] > 0:
-    obj_terms.append(xr_ref['SI_Biomass'].rolling(lon=rollingwindow_biomass, lat=rollingwindow_biomass, min_periods=1, center=True).sum() * (cap_biomass / maxcap_biomass))
+    obj_terms.append(xr_ref['rolling_avg_SI_Biomass'] * cap_biomass)
 if quota_totals['bgec'] > 0:
-    obj_terms.append(xr_ref['SI_BGEC'].rolling(lon=rollingwindow_bgec, lat=rollingwindow_bgec, min_periods=1, center=True).sum() * (cap_bgec / maxcap_bgec))
+    obj_terms.append(xr_ref['rolling_avg_SI_BGEC'] * cap_bgec)
 if quota_totals['msw'] > 0:
-    obj_terms.append(xr_ref['SI_MSW'].rolling(lon=rollingwindow_msw, lat=rollingwindow_msw, min_periods=1, center=True).sum() * (cap_msw / maxcap_msw))
+    obj_terms.append(xr_ref['rolling_avg_SI_MSW'] * cap_msw)
 
 if obj_terms:
     obj = (-10000) * sum(obj_terms)
     m.add_objective(obj)
-###################### Objective function ################################################################################################
 
-###################### Solver ################################################################################################
+# ======================================================================================================================
+# 9. Solve Model and Run Basic Diagnostics
+# ======================================================================================================================
 print("presolve = ",m)
 m.solve(solver_name='highs',
         mip_abs_gap = 0.1,
@@ -403,6 +485,11 @@ print('aftersolve = ',m)
 solution = solution.fillna(0)
 print(solution)
 
+# ======================================================================================================================
+# 10. Attach Solution Back to the xarray Dataset
+# ----------------------------------------------------------------------------------------------------------------------
+# Multiplying cap_* by built_* removes capacity from any non-selected cells and gives clean output layers for export.
+# ======================================================================================================================
 xr_ref['cap_wind'] = np.round(solution['cap_wind'] * solution['built_wind'],4) if 'cap_wind' in solution else 0
 xr_ref['cap_solar'] = np.round(solution['cap_solar'] * solution['built_solar'],4) if 'cap_solar' in solution else 0
 xr_ref['cap_biomass'] = np.round(solution['cap_biomass'] * solution['built_biomass'],4) if 'cap_biomass' in solution else 0
@@ -416,21 +503,11 @@ xr_ref['built_biomass'] = solution['built_biomass'] if 'built_biomass' in soluti
 xr_ref['built_bgec'] = solution['built_bgec'] if 'built_bgec' in solution else 0
 xr_ref['built_msw'] = solution['built_msw'] if 'built_msw' in solution else 0
 
-# Capture rolling/footprint information (Available area, Sum of SI, Average SI)
-xr_ref['rolling_AVA_Wind'] = xr_ref['AVA_Wind'].rolling(lon=rollingwindow_wind, lat=rollingwindow_wind, min_periods=1, center=True).sum()
-xr_ref['rolling_AVA_Solar'] = xr_ref['AVA_Solar'].rolling(lon=rollingwindow_solar, lat=rollingwindow_solar, min_periods=1, center=True).sum()
-xr_ref['rolling_AVA_Biomass'] = xr_ref['AVA_Biomass'].rolling(lon=rollingwindow_biomass, lat=rollingwindow_biomass, min_periods=1, center=True).sum()
-xr_ref['rolling_AVA_BGEC'] = xr_ref['AVA_BGEC'].rolling(lon=rollingwindow_bgec, lat=rollingwindow_bgec, min_periods=1, center=True).sum()
-xr_ref['rolling_AVA_MSW'] = xr_ref['AVA_MSW'].rolling(lon=rollingwindow_msw, lat=rollingwindow_msw, min_periods=1, center=True).sum()
-
-xr_ref['rolling_sum_SI_Wind'] = xr_ref['SI_Wind'].rolling(lon=rollingwindow_wind, lat=rollingwindow_wind, min_periods=1, center=True).sum()
-xr_ref['rolling_sum_SI_Solar'] = xr_ref['SI_Solar'].rolling(lon=rollingwindow_solar, lat=rollingwindow_solar, min_periods=1, center=True).sum()
-xr_ref['rolling_avg_SI_Wind'] = xr_ref['SI_Wind'].rolling(lon=rollingwindow_wind, lat=rollingwindow_wind, min_periods=1, center=True).mean()
-xr_ref['rolling_avg_SI_Solar'] = xr_ref['SI_Solar'].rolling(lon=rollingwindow_solar, lat=rollingwindow_solar, min_periods=1, center=True).mean()
-xr_ref['rolling_avg_SI_Biomass'] = xr_ref['SI_Biomass'].rolling(lon=rollingwindow_biomass, lat=rollingwindow_biomass, min_periods=1, center=True).mean()
-xr_ref['rolling_avg_SI_BGEC'] = xr_ref['SI_BGEC'].rolling(lon=rollingwindow_bgec, lat=rollingwindow_bgec, min_periods=1, center=True).mean()
-xr_ref['rolling_avg_SI_MSW'] = xr_ref['SI_MSW'].rolling(lon=rollingwindow_msw, lat=rollingwindow_msw, min_periods=1, center=True).mean()
-
+# ======================================================================================================================
+# 11. Print Capacity Summary
+# ----------------------------------------------------------------------------------------------------------------------
+# Report total installed capacity and regional totals by technology for a quick check against quotas.
+# ======================================================================================================================
 print("cap_wind = ",xr_ref['cap_wind'].sum())
 print("  R0 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R0').sum())
 print("  R10 cap_wind = ",xr_ref['cap_wind'].where(xr_ref['region'] == 'R10').sum())
@@ -477,29 +554,15 @@ print("  R3 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R3').sum())
 print("  R4 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R4').sum())
 
 print(xr_ref.data_vars)
-xr_ref.to_netcdf(path='Output\\xr_output_all_SSI_' + str(scenario_SI) + "_CS_"+str(coarsenscale)+ '_.nc')
+netcdf_out_path = output_dir / 'xr_output_all.nc'
+xr_ref.to_netcdf(path=netcdf_out_path)
+print(f"NetCDF results exported successfully to: {netcdf_out_path}")
 
-# Identify any additional individual SI sub-criteria variables dynamically
-extra_si_vars = [v for v in xr_ref.data_vars if v.startswith('SI_') and v not in [
-    'SI_Wind', 'SI_Solar', 'SI_Biomass', 'SI_BGEC', 'SI_MSW',
-    'SI_Wind_max', 'SI_Wind_min', 'SI_Solar_max', 'SI_Solar_min'
-]]
-
-# Calculate footprint rolling averages for the sub-criteria SIs
-wind_extra_si_vars = []
-solar_extra_si_vars = []
-
-for var in extra_si_vars:
-    wind_var_name = f'rolling_avg_{var}_Wind'
-    solar_var_name = f'rolling_avg_{var}_Solar'
-    
-    xr_ref[wind_var_name] = xr_ref[var].rolling(lon=rollingwindow_wind, lat=rollingwindow_wind, min_periods=1, center=True).mean()
-    xr_ref[solar_var_name] = xr_ref[var].rolling(lon=rollingwindow_solar, lat=rollingwindow_solar, min_periods=1, center=True).mean()
-    
-    wind_extra_si_vars.append(wind_var_name)
-    solar_extra_si_vars.append(solar_var_name)
-
-# Export selected sites to CSV
+# ======================================================================================================================
+# 12. Export Selected Sites
+# ----------------------------------------------------------------------------------------------------------------------
+# Keep only grid cells where at least one technology has positive installed capacity.
+# ======================================================================================================================
 csv_cols = [
     'cap_wind', 'rolling_AVA_Wind', 'rolling_avg_SI_Wind', 
     'cap_solar', 'rolling_AVA_Solar', 'rolling_avg_SI_Solar', 
@@ -512,14 +575,17 @@ df_results = xr_ref[csv_cols].to_dataframe().reset_index()
 
 # Filter to keep only the grid cells where capacity was built
 df_results = df_results[(df_results['cap_wind'] > 0) | (df_results['cap_solar'] > 0) | (df_results['cap_biomass'] > 0) | (df_results['cap_bgec'] > 0) | (df_results['cap_msw'] > 0)]
-df_results = df_results.round(2) # Clean up CSV float values
 
 # Export to CSV
-csv_out_path = f'Output\\Investment_Sites_SSI_{scenario_SI}_CS_{coarsenscale}.csv'
-df_results.to_csv(csv_out_path, index=False)
+csv_out_path = output_dir / 'Investment_Sites.csv'
+df_results.round(2).to_csv(csv_out_path, index=False)
 print(f"Tabular results exported successfully to: {csv_out_path}")
 
-###################### Visualization #########################################################################################
+# ======================================================================================================================
+# 13. Interactive Map
+# ----------------------------------------------------------------------------------------------------------------------
+# Draw selected sites as capacity-scaled square buffers and write an HTML map with one layer per technology.
+# ======================================================================================================================
 print("Generating interactive map visualization...")
 
 # We already have thailandmap loaded from earlier in the script
@@ -550,8 +616,8 @@ for tech, tech_label, cmap, window, extra_tips in tech_configs:
 
     cols = [cap_col, ava_col, si_col] + [tip[0] for tip in extra_tips]
 
-    # Extract DataFrame, filter, and clean up
-    df = xr_ref[cols].to_dataframe().reset_index()
+    # Reuse selected-site rows instead of rebuilding full xarray dataframes for every technology.
+    df = df_results[['lat', 'lon'] + cols].copy()
     df = df[df[cap_col] > 0].dropna(subset=[cap_col])
 
     if df.empty:
@@ -575,7 +641,7 @@ for tech, tech_label, cmap, window, extra_tips in tech_configs:
 
     gdf = gdf.to_crs("EPSG:32647")
     
-    # Adaptive buffer calculation based on actual capacity
+    # Convert capacity into an approximate footprint area for visual scaling.
     if tech == 'wind':
         area_km2 = gdf['Capacity (MW)'] / mwperkm2_wind
     elif tech == 'solar':
@@ -599,10 +665,10 @@ for tech, tech_label, cmap, window, extra_tips in tech_configs:
         tooltip=tooltip_cols
     )
 
-# Add a layer control panel to easily toggle Wind/Solar/Boundaries on and off
+# Add a layer control panel to toggle technologies and boundaries.
 folium.LayerControl().add_to(m)
 
 # Save interactive map
-out_file = f'Output\\InvestmentMap_SSI_{scenario_SI}_CS_{coarsenscale}_Interactive.html'
+out_file = output_dir / 'InvestmentMap_Interactive.html'
 m.save(out_file)
 print(f"Interactive map saved successfully! Open '{out_file}' in your web browser to explore.")

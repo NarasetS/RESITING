@@ -183,7 +183,7 @@ def calculate_relative_importance():
     # Configuration
     data_dir = Path("Data")
     output_dir = Path("Output") # Natively handles masks using neighborhood search
-    out_weights_file = Path("empirical_weights.json")
+    out_weights_file = Path("weightfactors/empirical_weights.json")
     
     csv_path = data_dir / "ExistingPlants_wPosition.csv"
     xlsx_path = data_dir / "NewVRE.xlsx"
