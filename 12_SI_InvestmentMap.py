@@ -12,7 +12,7 @@ from pathlib import Path
 # Grid resolution, technology density assumptions, plant footprint size, and rolling-window sizes.
 # The rolling window represents the area around a candidate plant center that is considered part of the plant footprint.
 # ======================================================================================================================
-coarsenscale = 10
+coarsenscale = 5
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -34,9 +34,9 @@ output_dir.mkdir(parents=True, exist_ok=True)
 rollingwindow_wind = int(np.ceil(np.sqrt(suitablearea_wind/areapergrid)))
 rollingwindow_solar = int(np.ceil(np.sqrt(suitablearea_solar/areapergrid)))
 
-suitablearea_biomass = 100 ## km2 
-suitablearea_bgec = 100 ## km2
-suitablearea_msw = 100 ## km2
+suitablearea_biomass = 100 ## km^2 
+suitablearea_bgec = 100 ## km^2
+suitablearea_msw = 100 ## km^2
 
 rollingwindow_biomass = int(np.ceil(np.sqrt(suitablearea_biomass/areapergrid)))
 rollingwindow_bgec = int(np.ceil(np.sqrt(suitablearea_bgec/areapergrid)))
@@ -245,8 +245,11 @@ quotas = {
     'wind': {'R0': 0, 'R10': 3000, 'R11': 1840, 'R12': 1220, 'R2': 10940, 'R3': 800, 'R4': 2200},
     'solar': {'R0': 300, 'R10': 4000, 'R11': 4600, 'R12': 4600, 'R2': 25000, 'R3': 10000, 'R4': 15000},
     'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
-    'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
-    'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
+    'bgec': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
+    'msw': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0}
+    # 'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
+    # 'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
+    # 'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
 }
 
 quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.items()}
