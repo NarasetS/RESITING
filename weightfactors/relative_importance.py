@@ -1,10 +1,36 @@
 import pandas as pd
-import geopandas as gpd
 import xarray as xr
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import json
 from pathlib import Path
+
+CRITERIA_NAMES = [
+    "Landcover",
+    "Slope",
+    "Elevation",
+    "Distance to settlement",
+    "Distance to wetland",
+    "Distance to forest",
+    "Distance to road",
+    "Distance to substation",
+    "Resource potential",
+    "Land cost",
+    "Farm/feedstock area",
+]
+
+TRAINING_CRITERIA_FILES = [
+    ("Landcover", "xr_SI_Landcover.nc", "SI_{tech}"),
+    ("Slope", "xr_SI_Slope.nc", "SI_{tech}"),
+    ("Elevation", "xr_SI_Elevation.nc", "SI_{tech}"),
+    ("Distance to settlement", "xr_SI_Distancetosettlementarea.nc", "SI_{tech}"),
+    ("Distance to wetland", "xr_SI_Distancetowetland.nc", "SI_{tech}"),
+    ("Distance to forest", "xr_SI_Distancetoforest.nc", "SI_{tech}"),
+    ("Distance to road", "xr_SI_Distancetoroad.nc", "SI_{tech}"),
+    ("Distance to substation", "xr_SI_Distancetosubstation.nc", "SI_DtoSubs"),
+    ("Resource potential", "xr_SI_resourcepotential.nc", "SI_{tech}"),
+    ("Land cost", "xr_SI_LandCost.nc", "land_cost_avg_price_norm"),
+]
 
 def load_existing_plants(csv_path, xlsx_path):
     """
@@ -53,14 +79,20 @@ def load_existing_plants(csv_path, xlsx_path):
         raise ValueError("Could not find required columns in plant data files. Check the printed columns above.")
         
     df_all = pd.concat(plants, ignore_index=True).dropna(subset=['Latitude', 'Longitude'])
+    df_all['Latitude'] = pd.to_numeric(df_all['Latitude'], errors='coerce')
+    df_all['Longitude'] = pd.to_numeric(df_all['Longitude'], errors='coerce')
+    invalid_coords = df_all['Latitude'].isna() | df_all['Longitude'].isna()
+    if invalid_coords.any():
+        print(f"Warning: Dropping {int(invalid_coords.sum())} rows with non-numeric coordinates.")
+        df_all = df_all.loc[~invalid_coords].copy()
     
     def standardize_tech(t):
         t_upper = str(t).strip().upper()
         if 'WIND' in t_upper: return 'Wind'
         if 'SOLAR' in t_upper: return 'Solar'
         if 'BIOMASS' in t_upper: return 'Biomass'
+        if 'BGWW' in t_upper or 'WASTEWATER' in t_upper: return 'BGWW'
         if 'BIOGAS' in t_upper or 'BGEC' in t_upper: return 'BGEC'
-        if 'BGWW' in t_upper: return 'BGWW'
         if 'IEW' in t_upper or 'INDUSTRIAL' in t_upper: return 'IEW'
         if 'MSW' in t_upper or 'MUNICIPAL' in t_upper or 'WASTE' in t_upper: return 'MSW'
         return None
@@ -79,17 +111,27 @@ def load_existing_plants(csv_path, xlsx_path):
     
     return df_all
 
-def get_local_unmasked_value(data_array, lat, lon, window_size=11):
+def get_local_sample_value(data_array, lat, lon, window_size=11, method="median"):
     """
-    Retrieves the maximum SI value in the immediate neighborhood of the coordinates.
-    This bypasses the existing plant footprint masks (which are set to 0) by 
-    finding the nearest unmasked pixel within a grid window (e.g., 11x11 = ~3.3x3.3km).
+    Retrieves an SI value around a coordinate.
+    Median neighborhood sampling is less optimistic than the previous max-nearby
+    approach while still reducing the impact of masked plant footprint cells.
     """
     try:
+        if not (
+            float(data_array.lat.min()) <= lat <= float(data_array.lat.max())
+            and float(data_array.lon.min()) <= lon <= float(data_array.lon.max())
+        ):
+            return np.nan
+
         # Find the integer index of the nearest cell
         center = data_array.sel(lat=lat, lon=lon, method='nearest')
         lat_idx = int(np.abs(data_array.lat.values - center.lat.values).argmin())
         lon_idx = int(np.abs(data_array.lon.values - center.lon.values).argmin())
+
+        center_value = float(center.values)
+        if method == "nearest":
+            return center_value if np.isfinite(center_value) else np.nan
         
         # Calculate the bounds of the window
         half_win = window_size // 2
@@ -101,40 +143,34 @@ def get_local_unmasked_value(data_array, lat, lon, window_size=11):
         # Extract the window using integer slicing
         window = data_array.isel(lat=slice(lat_start, lat_end), lon=slice(lon_start, lon_end))
         
-        # Find the maximum non-zero value (assuming plants are built on locally optimal land)
-        valid_vals = window.values[window.values > 0]
-        if len(valid_vals) > 0:
+        window_values = window.values
+        valid_vals = window_values[np.isfinite(window_values) & (window_values > 0)]
+        if len(valid_vals) == 0:
+            return 0.0
+        if method == "median":
+            return float(np.median(valid_vals))
+        if method == "mean":
+            return float(np.mean(valid_vals))
+        if method == "max":
             return float(np.max(valid_vals))
+        raise ValueError(f"Unsupported sampling method: {method}")
     except Exception:
-        pass
+        return np.nan
     
     return 0.0
 
-def extract_si_features(df_tech, output_dir, tech_name):
+def extract_si_features(df_tech, output_dir, tech_name, sample_method="median"):
     """
-    Extracts the 11 criteria SI values at the plant coordinates.
-    Uses a neighborhood search to bypass plant footprint masks.
+    Extracts the independent SI criteria values at point coordinates.
+    The default median neighborhood sampler is a compromise between exact-cell
+    sampling and the old max-neighborhood approach.
     """
-    # Define the 11 criteria files
-    criteria_files = [
-        ('xr_SI_Landcover.nc', f'SI_{tech_name}'),
-        ('xr_SI_Slope.nc', f'SI_{tech_name}'),
-        ('xr_SI_Elevation.nc', f'SI_{tech_name}'),
-        ('xr_SI_Distancetosettlementarea.nc', f'SI_{tech_name}'),
-        ('xr_SI_Distancetowetland.nc', f'SI_{tech_name}'),
-        ('xr_SI_Distancetoforest.nc', f'SI_{tech_name}'),
-        ('xr_SI_Distancetoroad.nc', f'SI_{tech_name}'),
-        ('xr_SI_Distancetosubstation.nc', 'SI_DtoSubs'),
-        ('xr_SI_resourcepotential.nc', f'SI_{tech_name}'),
-        ('xr_SI_LandCost.nc', 'land_cost_avg_price_norm'),
-        ('xr_SI_Farmarea.nc', f'SI_{tech_name}') # Assuming an unmasked farm area proxy
-    ]
-    
     features = []
-    for fname, var_name in criteria_files:
+    for criteria_name, fname, var_template in TRAINING_CRITERIA_FILES:
+        var_name = var_template.format(tech=tech_name)
         fpath = Path(output_dir) / fname
         if not fpath.exists():
-            print(f"Warning: {fpath} not found. Filling with 0.")
+            print(f"Warning: {criteria_name} file not found at {fpath}. Filling with 0.")
             features.append(np.zeros(len(df_tech)))
             continue
             
@@ -143,19 +179,30 @@ def extract_si_features(df_tech, output_dir, tech_name):
                 data = ds[var_name]
                 sampled_vals = []
                 for lat, lon in zip(df_tech['Latitude'].values, df_tech['Longitude'].values):
-                    # Extract the local area value avoiding the deadzone mask
-                    val = get_local_unmasked_value(data, lat, lon, window_size=11)
+                    # Median sampling avoids overvaluing a point because of one high nearby cell.
+                    val = get_local_sample_value(data, lat, lon, window_size=11, method=sample_method)
                     sampled_vals.append(val)
+                sampled_vals = np.array(sampled_vals, dtype=float)
+                failed_samples = np.isnan(sampled_vals)
+                if failed_samples.any():
+                    print(
+                        f"Warning: {criteria_name} sampling failed for "
+                        f"{int(failed_samples.sum())}/{len(sampled_vals)} {tech_name} points. Filling with 0."
+                    )
+                    sampled_vals = np.nan_to_num(sampled_vals, nan=0.0)
                 features.append(sampled_vals)
             else:
+                print(f"Warning: {var_name} not found in {fpath}. Filling {criteria_name} with 0.")
                 features.append(np.zeros(len(df_tech)))
                 
-    # Shape: (num_plants, 11 criteria)
+    # Shape: (num_plants, 10 criteria). Farm/feedstock area is appended after modeling
+    # to avoid training weights on a layer generated by the weights themselves.
     return np.column_stack(features)
 
-def generate_background_absence(num_points, output_dir, tech_name):
+def generate_background_absence(num_points, output_dir, tech_name, rng):
     """
-    Generates random background points (Absence data) to compare against Presence data.
+    Generates random background points for presence-vs-background training.
+    These are pseudo-absence points, not confirmed rejected or unsuitable sites.
     """
     # Open one file to get the grid bounds and valid coordinates
     with xr.open_dataset(Path(output_dir) / 'xr_SI_Slope.nc') as ds:
@@ -165,10 +212,17 @@ def generate_background_absence(num_points, output_dir, tech_name):
         
     # Find all valid (lat, lon) indices
     valid_indices = np.argwhere(valid_mask)
+    if len(valid_indices) == 0:
+        raise ValueError(f"No valid slope cells found for {tech_name}; cannot generate background points.")
     
     # Randomly sample background points
-    np.random.seed(42)
-    sampled_idx = valid_indices[np.random.choice(len(valid_indices), num_points, replace=False)]
+    replace = num_points > len(valid_indices)
+    if replace:
+        print(
+            f"Warning: Requested {num_points} background points for {tech_name}, "
+            f"but only {len(valid_indices)} valid cells are available. Sampling with replacement."
+        )
+    sampled_idx = valid_indices[rng.choice(len(valid_indices), num_points, replace=replace)]
     
     df_bg = pd.DataFrame({
         'Latitude': lats[sampled_idx[:, 0]],
@@ -179,6 +233,8 @@ def generate_background_absence(num_points, output_dir, tech_name):
 
 def calculate_relative_importance():
     print("Starting Relative Importance Analysis...")
+    print("Training mode: presence-vs-random-background pseudo-absence.")
+    print("Sampling mode: median neighborhood.")
     
     # Configuration
     data_dir = Path("Data")
@@ -199,6 +255,7 @@ def calculate_relative_importance():
         'Waste': ['MSW', 'IEW']
     }
     
+    rng = np.random.default_rng(42)
     empirical_weights = {}
     
     for group_name, techs in tech_groups.items():
@@ -216,8 +273,8 @@ def calculate_relative_importance():
                 # 1. Get features for existing plants (Class 1)
                 X_presence_list.append(extract_si_features(df_tech, output_dir, tech))
                 
-                # 2. Get features for background/absence (Class 0)
-                df_bg = generate_background_absence(len(df_tech) * 3, output_dir, tech)
+                # 2. Get pseudo-absence features (Class 0)
+                df_bg = generate_background_absence(len(df_tech) * 3, output_dir, tech, rng)
                 X_absence_list.append(extract_si_features(df_bg, output_dir, tech))
         
         if total_plants < 5:
@@ -235,14 +292,22 @@ def calculate_relative_importance():
         rf = RandomForestClassifier(n_estimators=200, random_state=42, class_weight='balanced')
         rf.fit(X, y)
         
-        # 4. Extract and normalize weights
-        importances = rf.feature_importances_
+        # 4. Extract and normalize weights.
+        # Farm/feedstock area is assigned 0 here because it is generated downstream
+        # by 11_SI_Farmarea.py, which consumes these empirical weights.
+        model_importances = rf.feature_importances_
+        importances = np.append(model_importances, 0.0)
         
         # Distribute the group's weights to all individual technologies within it
         for tech in techs:
-            empirical_weights[tech] = importances.tolist()
+            empirical_weights[tech] = {
+                criteria_name: float(importance)
+                for criteria_name, importance in zip(CRITERIA_NAMES, importances)
+            }
         
-        print(f"Calculated Weights for {group_name}: {np.round(importances, 4)}")
+        print(f"Calculated Weights for {group_name}:")
+        for criteria_name, importance in zip(CRITERIA_NAMES, importances):
+            print(f"  {criteria_name:25s}: {importance:.4f}")
         
     # Save weights
     with open(out_weights_file, 'w') as f:

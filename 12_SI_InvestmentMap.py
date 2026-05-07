@@ -12,7 +12,7 @@ from pathlib import Path
 # Grid resolution, technology density assumptions, plant footprint size, and rolling-window sizes.
 # The rolling window represents the area around a candidate plant center that is considered part of the plant footprint.
 # ======================================================================================================================
-coarsenscale = 5
+coarsenscale = 3
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -200,7 +200,7 @@ df_final_SI.crs = "EPSG:4326"
 df_final_SI.reset_index(inplace= True, drop = False)
 # df_final_SI_2 = gpd.sjoin_nearest(df_final_SI,thailandmap,how = 'left')
 df_final_SI_2 = gpd.sjoin(predicate='within',left_df= df_final_SI, right_df= thailandmap,how = 'left')
-df_final_SI_2 = df_final_SI_2.drop(columns=['ADM1_TH','geometry','index_right'])
+df_final_SI_2 = df_final_SI_2.drop(columns=['geometry','index_right'])
 df_final_SI_2 = df_final_SI_2.drop_duplicates('index')
 df_final_SI_2 = df_final_SI_2.drop(columns=['index'])
 df_final_SI_2.reset_index(inplace= True, drop = True)
@@ -572,17 +572,22 @@ csv_cols = [
     'cap_biomass', 'rolling_AVA_Biomass', 'rolling_avg_SI_Biomass', 
     'cap_bgec', 'rolling_AVA_BGEC', 'rolling_avg_SI_BGEC', 
     'cap_msw', 'rolling_AVA_MSW', 'rolling_avg_SI_MSW', 
-    'region'
+    'region', 'ADM1_TH'
 ]
 df_results = xr_ref[csv_cols].to_dataframe().reset_index()
 
 # Filter to keep only the grid cells where capacity was built
 df_results = df_results[(df_results['cap_wind'] > 0) | (df_results['cap_solar'] > 0) | (df_results['cap_biomass'] > 0) | (df_results['cap_bgec'] > 0) | (df_results['cap_msw'] > 0)]
 
-# Export to CSV
+# Export to CSV with full precision to prevent data loss
 csv_out_path = output_dir / 'Investment_Sites.csv'
-df_results.round(2).to_csv(csv_out_path, index=False)
+df_results.to_csv(csv_out_path, index=False, float_format='%.8f')
 print(f"Tabular results exported successfully to: {csv_out_path}")
+
+# Also export to Excel for better data type preservation
+xlsx_out_path = output_dir / 'Investment_Sites.xlsx'
+df_results.to_excel(xlsx_out_path, index=False)
+print(f"Excel results exported successfully to: {xlsx_out_path}")
 
 # ======================================================================================================================
 # 13. Interactive Map
