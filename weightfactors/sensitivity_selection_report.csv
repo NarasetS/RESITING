@@ -1,0 +1,8 @@
+tech,validation_tech,selected_scenario,selection_metric,selection_score,note
+Wind,Wind,resource_priority,median_existing_plant_percentile,88.52965220636585,Selected directly from validation results.
+Solar,Solar,equal_active,median_existing_plant_percentile,65.03819298501445,Selected directly from validation results.
+Biomass,Biomass,equal_active,median_existing_plant_percentile,60.73819406797655,Selected directly from validation results.
+BGEC,BGEC,equal_active,median_existing_plant_percentile,66.29985823323442,Selected directly from validation results.
+BGWW,BGEC,equal_active,median_existing_plant_percentile,66.29985823323442,Selected using BGEC as validation proxy.
+MSW,MSW,equal_active,median_existing_plant_percentile,56.23084024245802,Selected directly from validation results.
+IEW,MSW,equal_active,median_existing_plant_percentile,56.23084024245802,Selected using MSW as validation proxy.
