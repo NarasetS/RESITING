@@ -64,7 +64,7 @@ def rolling_mean_positive(da, window):
 # Apply the SI threshold, remove availability where SI is zero, coarsen the raster grid, and preserve selected min/max
 # SI diagnostics from the original resolution.
 # ======================================================================================================================
-xr_final_SI_raw = xr.open_dataset('Output\\xr_final_SI_all.nc')
+xr_final_SI_raw = xr.open_dataset('Output\\xr_final_SI_all_existing_committed_cutoff.nc')
 xr_final_SI_raw = xr_final_SI_raw.drop_vars('ADM1_EN')
 # xr_final_SI_raw = xr_final_SI_raw.drop_vars('SI_BGEC')
 # xr_final_SI_raw = xr_final_SI_raw.drop_vars('SI_BGWW')

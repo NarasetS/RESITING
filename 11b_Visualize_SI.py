@@ -11,9 +11,9 @@ def generate_interactive_si_maps():
     # Define the criteria and their corresponding files/variables
     # Format - Display Name: (filename, variable_template)
     criteria_files = {
-        'Final Weighted SI': ('xr_final_SI_all.nc', 'SI_{t}'),
-        'Available Capacity (MW)': ('xr_final_SI_all.nc', 'A_{t}'),
-        '0. Landcover': ('xr_SI_Landcover.nc', 'SI_{t}'),
+        'Final Weighted SI': ('xr_final_SI_all_existing_committed_cutoff.nc', 'SI_{t}'),
+        'Available Capacity (MW)': ('xr_final_SI_all_existing_committed_cutoff.nc', 'A_{t}'),
+        '0. Landcover': ('xr_SI_Landcover_beforefeedstock_existing_committed_cutoff.nc', 'SI_{t}'),
         '1. Slope': ('xr_SI_Slope.nc', 'SI_{t}'),
         '2. Elevation': ('xr_SI_Elevation.nc', 'SI_{t}'),
         '3. Dist to Settlement': ('xr_SI_Distancetosettlementarea.nc', 'SI_{t}'),
