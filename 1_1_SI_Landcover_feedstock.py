@@ -85,7 +85,7 @@ def process_landcover_feedstock(
     feedstock = pd.read_csv(feedstock_path, header=0)
     feedstock = feedstock.loc[feedstock["แหล่งพลังงานหลัก"].isin(["ชีวมวล", "ก๊าซชีวภาพ", "ขยะ"])].copy()
     feedstock["ศักยภาพพลังงานทดแทน (ktoe)"] = pd.to_numeric(
-        feedstock["ศักยภาพพลังงานทดแทน (ktoe)"],
+        feedstock["ศักยภาพพลังงานทดแทน (ktoe)"].str.replace(',', ''),
         errors="coerce",
     )
     feedstock = feedstock.dropna(subset=["ศักยภาพพลังงานทดแทน (ktoe)"])

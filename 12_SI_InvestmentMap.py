@@ -4,6 +4,7 @@ import xarray as xr
 import geopandas as gpd
 import numpy as np
 import folium
+from datetime import datetime
 from pathlib import Path
  
 # ======================================================================================================================
@@ -242,13 +243,13 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R10': 3000, 'R11': 1840, 'R12': 1220, 'R2': 10940, 'R3': 800, 'R4': 2200},
-    'solar': {'R0': 150, 'R10': 2550, 'R11': 1050, 'R12': 3150, 'R2': 2550, 'R3': 1350, 'R4': 4200},
+    'wind': {'R0': 0, 'R10': 1500, 'R11': 920, 'R12': 610, 'R2': 5470, 'R3': 400, 'R4': 1100},
+    'solar': {'R0': 75, 'R10': 1275, 'R11': 525, 'R12': 1575, 'R2': 1275, 'R3': 675, 'R4': 2100},
     'biomass': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'bgec': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'msw': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0}
-    # 'wind': {'R0': 0, 'R10': 1500, 'R11': 920, 'R12': 610, 'R2': 5470, 'R3': 400, 'R4': 1100},
-    # 'solar': {'R0': 75, 'R10': 1275, 'R11': 525, 'R12': 1575, 'R2': 1275, 'R3': 675, 'R4': 2100},
+    # 'wind': {'R0': 0, 'R10': 3000, 'R11': 1840, 'R12': 1220, 'R2': 10940, 'R3': 800, 'R4': 2200},
+    # 'solar': {'R0': 150, 'R10': 2550, 'R11': 1050, 'R12': 3150, 'R2': 2550, 'R3': 1350, 'R4': 4200},
     # 'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
     # 'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
     # 'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
@@ -607,8 +608,27 @@ m = thailandmap.explore(
     style_kwds={"fillOpacity": 0.0, "weight": 1.5}, 
     name="Thailand Boundary",
     tooltip=False,
-    tiles="OpenStreetMap"
+    tiles="Esri.WorldImagery"
 )
+
+# Add a small timestamp overlay for the satellite imagery layer.
+satellite_timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+timestamp_html = f"""
+<div style=\"position: fixed; bottom: 10px; left: 10px; z-index:9999; background-color: rgba(255,255,255,0.8); padding: 6px 10px; border-radius: 6px; font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.3);\">
+<strong>Satellite imagery timestamp:</strong> {satellite_timestamp}
+</div>
+"""
+m.get_root().html.add_child(folium.Element(timestamp_html))
+
+# Add province name labels on top of the satellite imagery.
+for _, province in thailandmap.iterrows():
+    centroid = province.geometry.centroid
+    folium.map.Marker(
+        [centroid.y, centroid.x],
+        icon=folium.DivIcon(
+            html=f'<div style="font-size:11px; color: white; text-shadow: 1px 1px 2px black; font-weight: bold;">{province["ADM1_TH"]}</div>'
+        )
+    ).add_to(m)
 
 # Configuration for each technology map layer
 tech_configs = [
