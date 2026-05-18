@@ -243,13 +243,13 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R10': 1500, 'R11': 920, 'R12': 610, 'R2': 5470, 'R3': 400, 'R4': 1100},
-    'solar': {'R0': 75, 'R10': 1275, 'R11': 525, 'R12': 1575, 'R2': 1275, 'R3': 675, 'R4': 2100},
+    'wind': {'R0': 0, 'R10': 2250, 'R11': 1380, 'R12': 915, 'R2': 8205, 'R3': 600, 'R4': 1650},
+    'solar': {'R0': 112.5, 'R10': 1912.5, 'R11': 787.5, 'R12': 2362.5, 'R2': 1912.5, 'R3': 1012.5, 'R4': 3150},
     'biomass': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'bgec': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'msw': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0}
-    # 'wind': {'R0': 0, 'R10': 3000, 'R11': 1840, 'R12': 1220, 'R2': 10940, 'R3': 800, 'R4': 2200},
-    # 'solar': {'R0': 150, 'R10': 2550, 'R11': 1050, 'R12': 3150, 'R2': 2550, 'R3': 1350, 'R4': 4200},
+    # 'wind': {'R0': 0, 'R10': 1500, 'R11': 920, 'R12': 610, 'R2': 5470, 'R3': 400, 'R4': 1100},
+    # 'solar': {'R0': 75, 'R10': 1275, 'R11': 525, 'R12': 1575, 'R2': 1275, 'R3': 675, 'R4': 2100},
     # 'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
     # 'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
     # 'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
@@ -561,6 +561,12 @@ print("  R4 cap_msw = ",xr_ref['cap_msw'].where(xr_ref['region'] == 'R4').sum())
 
 print(xr_ref.data_vars)
 netcdf_out_path = output_dir / 'xr_output_all.nc'
+if netcdf_out_path.exists():
+    try:
+        netcdf_out_path.unlink()
+    except PermissionError:
+        raise PermissionError(f"Cannot overwrite existing NetCDF file: {netcdf_out_path}. Close any program using it and rerun.")
+
 xr_ref.to_netcdf(path=netcdf_out_path)
 print(f"NetCDF results exported successfully to: {netcdf_out_path}")
 
@@ -603,13 +609,83 @@ print("Generating interactive map visualization...")
 thailandmap = thailandmap.to_crs("EPSG:4326")
 
 # Create an interactive base map with the Thailand boundaries
-m = thailandmap.explore(
-    color="black", 
-    style_kwds={"fillOpacity": 0.0, "weight": 1.5}, 
+center = thailandmap.geometry.unary_union.centroid
+m = folium.Map(location=[center.y, center.x], zoom_start=6, tiles="Esri.WorldImagery")
+folium.GeoJson(
+    thailandmap,
     name="Thailand Boundary",
-    tooltip=False,
-    tiles="Esri.WorldImagery"
-)
+    style_function=lambda feature: {"fillOpacity": 0.0, "color": "black", "weight": 1.5},
+).add_to(m)
+
+# Add infrastructure layers: substations and transmission lines
+substations_path = Path("Data") / "Substation_EGAT" / "สถานีไฟฟ้าแรงสูง_2026.shp"
+transmission_path = Path("Data") / "TransmissionLines_EGAT" / "สายส่งไฟฟ้าแรงสูง_2026.shp"
+
+try:
+    substations = gpd.read_file(substations_path)
+    if "STATUS" in substations.columns:
+        substations = substations[substations["STATUS"] == "EXISTING"].copy()
+    substations = substations.to_crs("EPSG:4326")
+    if not substations.empty:
+        substations_group = folium.FeatureGroup(name="Substations")
+        for _, row in substations.iterrows():
+            if row.geometry is None or row.geometry.is_empty:
+                continue
+            name_en = row.get("NAME_E") or row.get("NAME_T") or row.get("SUBNAME_T") or "Substation"
+            name_th = row.get("NAME_T") or row.get("SUBNAME_T") or "-"
+            voltage_cols = ["VOLTAGE500", "VOLTAGE230", "VOLTAGE115", "VOLTAGE69", "VOLTAGE132"]
+            voltages = []
+            for col in voltage_cols:
+                value = row.get(col)
+                if value is None:
+                    continue
+                if isinstance(value, float) and np.isnan(value):
+                    continue
+                if str(value).strip() == "":
+                    continue
+                voltages.append(str(value))
+            voltage_str = ", ".join(voltages) if voltages else "Unknown"
+            popup_html = f"<strong>{name_en}</strong><br>Thai name: {name_th}<br>Voltage: {voltage_str}"
+            tooltip_text = f"{name_en} ({voltage_str})"
+            folium.CircleMarker(
+                location=[row.geometry.y, row.geometry.x],
+                radius=3,
+                color="yellow",
+                fill=True,
+                fill_color="yellow",
+                fill_opacity=0.8,
+                weight=0.5,
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=tooltip_text
+            ).add_to(substations_group)
+        substations_group.add_to(m)
+except Exception as exc:
+    print(f"Warning: could not load substations layer: {exc}")
+
+try:
+    transmission_lines = gpd.read_file(transmission_path)
+    if "STATUS" in transmission_lines.columns:
+        transmission_lines = transmission_lines[transmission_lines["STATUS"] == "EXISTING"].copy()
+    transmission_lines = transmission_lines.to_crs("EPSG:4326")
+    if not transmission_lines.empty:
+        folium.GeoJson(
+            transmission_lines,
+            name="Transmission Lines",
+            style_function=lambda feature: {
+                "color": "cyan",
+                "weight": 2,
+                "opacity": 0.7,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=["NAME_LINE", "VOLTAGE", "SSUBNAME", "ESUBNAME"],
+                aliases=["Line name", "Voltage (kV)", "From substation", "To substation"],
+                localize=True,
+                sticky=False,
+                labels=True
+            )
+        ).add_to(m)
+except Exception as exc:
+    print(f"Warning: could not load transmission line layer: {exc}")
 
 # Add a small timestamp overlay for the satellite imagery layer.
 satellite_timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
@@ -687,13 +763,36 @@ for tech, tech_label, cmap, window, extra_tips in tech_configs:
     gdf.geometry = gdf.geometry.buffer(buffer_m, cap_style=3)
     gdf = gdf.to_crs("EPSG:4326")
 
-    # Add to map
+    # Add to map via folium.FeatureGroup and GeoJson
+    layer_colors = {
+        'Wind': 'blue',
+        'Solar': 'orange',
+        'Biomass': 'green',
+        'BGEC': 'purple',
+        'MSW': 'red'
+    }
+    layer_color = layer_colors.get(tech_label, 'gray')
     tooltip_cols = ["Latitude", "Longitude", "Total Area", "Capacity (MW)", f"Average SI {tech_label}"] + [tip[1] for tip in extra_tips]
-    gdf.explore(
-        m=m, column="Capacity (MW)", cmap=cmap, style_kwds={"fillOpacity": 0.6, "weight": 1},
-        name=f"{tech_label} Capacity (MW)", legend_kwds={"caption": f"{tech_label} Capacity (MW)"},
-        tooltip=tooltip_cols
-    )
+    tooltip_aliases = tooltip_cols.copy()
+
+    fg = folium.FeatureGroup(name=f"{tech_label} Capacity (MW)")
+    folium.GeoJson(
+        gdf,
+        style_function=lambda feature, color=layer_color: {
+            "fillColor": color,
+            "color": color,
+            "weight": 1,
+            "fillOpacity": 0.6,
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=tooltip_cols,
+            aliases=tooltip_aliases,
+            localize=True,
+            sticky=False,
+            labels=True
+        )
+    ).add_to(fg)
+    fg.add_to(m)
 
 # Add a layer control panel to toggle technologies and boundaries.
 folium.LayerControl().add_to(m)
