@@ -1,0 +1,93 @@
+{
+    "Wind": {
+        "Landcover": 0.04285472373921619,
+        "Slope": 0.027316394310896507,
+        "Elevation": 0.12501760093989261,
+        "Distance to settlement": 0.10399119794446735,
+        "Distance to wetland": 0.04685698005823212,
+        "Distance to forest": 0.007055224362316016,
+        "Distance to road": 0.03939290751614631,
+        "Distance to substation": 0.1168512428749894,
+        "Resource potential": 0.3495122068471689,
+        "Land cost": 0.14115152140667478,
+        "Farm/feedstock area": 0.0
+    },
+    "Solar": {
+        "Landcover": 0.03845091237720599,
+        "Slope": 0.142704545248311,
+        "Elevation": 0.08475744856647863,
+        "Distance to settlement": 0.14323134147015298,
+        "Distance to wetland": 0.021379247281226223,
+        "Distance to forest": 0.018218956093285364,
+        "Distance to road": 0.012313959298925311,
+        "Distance to substation": 0.2137002251030606,
+        "Resource potential": 0.1641455009961445,
+        "Land cost": 0.16109786356520944,
+        "Farm/feedstock area": 0.0
+    },
+    "Biomass": {
+        "Landcover": 0.035629047351135014,
+        "Slope": 0.13960889761397416,
+        "Elevation": 0.14947541646736856,
+        "Distance to settlement": 0.011188263536801446,
+        "Distance to wetland": 0.009635008884937964,
+        "Distance to forest": 0.0,
+        "Distance to road": 0.01967197522884045,
+        "Distance to substation": 0.33122217252747177,
+        "Resource potential": 0.0,
+        "Land cost": 0.30356921838947054,
+        "Farm/feedstock area": 0.0
+    },
+    "BGEC": {
+        "Landcover": 0.03158272518081693,
+        "Slope": 0.1393878041740277,
+        "Elevation": 0.17715988890652323,
+        "Distance to settlement": 0.01468365835572718,
+        "Distance to wetland": 0.015310482208959388,
+        "Distance to forest": 0.0,
+        "Distance to road": 0.020645935863627052,
+        "Distance to substation": 0.2811799972852784,
+        "Resource potential": 0.0,
+        "Land cost": 0.32004950802504023,
+        "Farm/feedstock area": 0.0
+    },
+    "BGWW": {
+        "Landcover": 0.03158272518081693,
+        "Slope": 0.1393878041740277,
+        "Elevation": 0.17715988890652323,
+        "Distance to settlement": 0.01468365835572718,
+        "Distance to wetland": 0.015310482208959388,
+        "Distance to forest": 0.0,
+        "Distance to road": 0.020645935863627052,
+        "Distance to substation": 0.2811799972852784,
+        "Resource potential": 0.0,
+        "Land cost": 0.32004950802504023,
+        "Farm/feedstock area": 0.0
+    },
+    "MSW": {
+        "Landcover": 0.019419950584551867,
+        "Slope": 0.059100318310077185,
+        "Elevation": 0.19155290795239155,
+        "Distance to settlement": 0.08302322773148682,
+        "Distance to wetland": 0.04924246741976984,
+        "Distance to forest": 0.0,
+        "Distance to road": 0.11342223532796519,
+        "Distance to substation": 0.24819119914417073,
+        "Resource potential": 0.0,
+        "Land cost": 0.2360476935295867,
+        "Farm/feedstock area": 0.0
+    },
+    "IEW": {
+        "Landcover": 0.019419950584551867,
+        "Slope": 0.059100318310077185,
+        "Elevation": 0.19155290795239155,
+        "Distance to settlement": 0.08302322773148682,
+        "Distance to wetland": 0.04924246741976984,
+        "Distance to forest": 0.0,
+        "Distance to road": 0.11342223532796519,
+        "Distance to substation": 0.24819119914417073,
+        "Resource potential": 0.0,
+        "Land cost": 0.2360476935295867,
+        "Farm/feedstock area": 0.0
+    }
+}
