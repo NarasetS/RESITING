@@ -13,7 +13,7 @@ from pathlib import Path
 # Grid resolution, technology density assumptions, plant footprint size, and rolling-window sizes.
 # The rolling window represents the area around a candidate plant center that is considered part of the plant footprint.
 # ======================================================================================================================
-coarsenscale = 3
+coarsenscale = 2
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
 scenario_SI = 0  ## Include area where SI >= scenario_SI
@@ -24,11 +24,12 @@ mwperkm2_solar = 15 ## originally 30 MW/km2 but deduct by 50% of the technically
 mwpergrid_wind = np.round(areapergrid * mwperkm2_wind,2)
 mwpergrid_solar =  np.round(areapergrid * mwperkm2_solar,2)
 
-target_capacity_mw = 90
-suitablearea_wind = target_capacity_mw / mwperkm2_wind
-suitablearea_solar = target_capacity_mw / mwperkm2_solar
+target_capacity_mw_wind = 50
+target_capacity_mw_solar = 10
+suitablearea_wind = target_capacity_mw_wind / mwperkm2_wind
+suitablearea_solar = target_capacity_mw_solar / mwperkm2_solar
 
-run_name = f'SSI_{scenario_SI}_CS_{coarsenscale}_TC_{target_capacity_mw}MW'
+run_name = f'SSI_{scenario_SI}_CS_{coarsenscale}'
 output_dir = Path('Output') / run_name
 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,8 +244,8 @@ enforce_total_quota = True
 enforce_regional_quota = True
 
 quotas = {
-    'wind': {'R0': 0, 'R10': 1650, 'R11': 1012, 'R12': 671, 'R2': 6017, 'R3': 440, 'R4': 1210},
-    'solar': {'R0': 82.5, 'R10': 1402.5, 'R11': 577.5, 'R12': 1732.5, 'R2': 1402.5, 'R3': 742.5, 'R4': 2310},
+    'wind': {'R0': 0, 'R10': 1900, 'R11': 1200, 'R12': 800, 'R2': 6600, 'R3': 600, 'R4': 1400},
+    'solar': {'R0': 100, 'R10': 1600, 'R11': 700, 'R12': 1900, 'R2': 1600, 'R3': 900, 'R4': 2600},
     'biomass': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'bgec': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
     'msw': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0}
