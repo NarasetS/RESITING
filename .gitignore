@@ -1,3 +1,39 @@
 .env/
+.venv/
+venv/
+env/
+
+# Large local datasets and generated outputs.
+Data/
 data/
+Output/
 output/
+
+# Python/Jupyter cache and local state.
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local credentials and machine-specific files.
+Data/cds_api.txt
+modify_cdsapi.txt
+.env*
+!.env.example
+
+# Release bundles and temporary files.
+dist/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
