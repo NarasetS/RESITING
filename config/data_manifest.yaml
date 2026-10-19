@@ -1,0 +1,96 @@
+# Replace-in-place data contract for new users.
+# Users can paste updated files into these paths, then run:
+#   python -m resiting validate-data
+
+datasets:
+  existing_plants:
+    type: csv
+    path: Data/ExistingPlants_wPosition.csv
+    required: true
+    required_columns:
+      - latitude
+      - longitude
+      - FuelTypeName
+
+  committed_re_sites:
+    type: excel
+    path: Data/NewVRE.xlsx
+    required: true
+    sheets:
+      - name: สรุปผู้ที่ได้รับการคัดเลือก
+        required_columns:
+          - lat
+          - lon
+          - planttype
+
+  planning_regions:
+    type: csv
+    path: Data/Region.csv
+    required: true
+    required_columns:
+      - province
+      - region
+
+  feedstock_potential:
+    type: csv
+    path: Data/สรุปข้อมูลพลังงาน -  ฐานข้อมูลพลังงานประเทศไทย.csv
+    required: true
+    required_columns:
+      - จังหวัด
+      - แหล่งพลังงานหลัก
+      - ศักยภาพพลังงานทดแทน (ktoe)
+
+  province_boundaries:
+    type: vector
+    path: Data/tha_admbnda_adm1_rtsd_20220121/tha_admbnda_adm1_rtsd_20220121.shp
+    required: true
+    expected_crs: EPSG:4326
+    geometry_types:
+      - Polygon
+      - MultiPolygon
+    required_columns:
+      - ADM1_TH
+      - ADM1_EN
+
+  substations:
+    type: vector
+    path: Data/Substation_EGAT/สถานีไฟฟ้าแรงสูง_2026.shp
+    required: true
+    expected_crs: EPSG:32647
+    geometry_types:
+      - Point
+      - MultiPoint
+    required_columns:
+      - STATUS
+
+  transmission_lines:
+    type: vector
+    path: Data/TransmissionLines_EGAT/สายส่งไฟฟ้าแรงสูง_2026.shp
+    required: true
+    expected_crs: EPSG:32647
+    geometry_types:
+      - LineString
+      - MultiLineString
+    required_columns:
+      - STATUS
+      - VOLTAGE
+
+  satellite_landcover_folder:
+    type: directory
+    path: Data/dataset-satellite-land-cover
+    required: true
+
+  elevation_folder:
+    type: directory
+    path: Data/THAILAND_SRTM
+    required: true
+
+  slope_folder:
+    type: directory
+    path: Data/tha_slope
+    required: true
+
+  climate_resource_folder:
+    type: directory
+    path: Data/CDS_Data
+    required: true

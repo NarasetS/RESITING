@@ -1,0 +1,85 @@
+# Default RESITING assumptions used by the new-user tooling.
+# Copy config/scenarios/base.yaml to make scenario-specific overrides.
+
+scenario:
+  name: PDP2026_PH_Case4H
+  description: PDP2026 public hearing case 4H assumptions
+
+assumptions:
+  si_threshold: 0
+  coarsen_scale: 3
+
+capacity_density:
+  wind_mw_per_km2: 4.5
+  solar_mw_per_km2: 15.0
+
+plant_size:
+  wind_mw: 50.0
+  solar_mw: 10.0
+  biomass_area_km2: 100.0
+  bgec_area_km2: 100.0
+  msw_area_km2: 100.0
+
+weights:
+  source: empirical
+  file: weightfactors/empirical_weights.json
+
+farm_area:
+  wind_min_km2: 4.0
+  solar_min_km2: 0.4
+
+exclusions:
+  existing_committed_buffer_m: 2900
+
+solver:
+  name: highs
+  mip_abs_gap: 0.1
+  mip_rel_gap: 0.1
+  enforce_total_quota: true
+  enforce_regional_quota: true
+
+output:
+  input_final_si:
+  investment_run_name:
+
+quotas:
+  wind:
+    R0: 0
+    R10: 5900
+    R11: 2500
+    R12: 2500
+    R2: 8200
+    R3: 1900
+    R4: 4550
+  solar:
+    R0: 600
+    R10: 5800
+    R11: 5500
+    R12: 5500
+    R2: 11500
+    R3: 7300
+    R4: 9800
+  biomass:
+    R0: 0
+    R10: 0
+    R11: 0
+    R12: 0
+    R2: 0
+    R3: 0
+    R4: 0
+  bgec:
+    R0: 0
+    R10: 0
+    R11: 0
+    R12: 0
+    R2: 0
+    R3: 0
+    R4: 0
+  msw:
+    R0: 0
+    R10: 0
+    R11: 0
+    R12: 0
+    R2: 0
+    R3: 0
+    R4: 0

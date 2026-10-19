@@ -7,6 +7,15 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from resiting.config import load_config
+from resiting.scenario import (
+    get_exclusion_settings,
+    get_farm_area_settings,
+    get_scenario_output_paths,
+    get_weight_settings,
+    write_stage_metadata,
+)
+
 
 TECHS = ["Wind", "Solar", "Biomass", "BGEC", "BGWW", "MSW", "IEW"]
 
@@ -93,6 +102,7 @@ def build_existing_committed_cutoff_si(
     buffer_m=2900,
     weight_source="empirical",
     weights_path=None,
+    farm_area_km2=None,
 ):
     """Build the optimization input without running weight-factor evaluation."""
     print("Building investment-ready SI with existing/committed sites excluded before feedstock integration...")
@@ -103,6 +113,7 @@ def build_existing_committed_cutoff_si(
 
     restricted_mask = build_restricted_mask(template, restricted_sites)
     cutoff_prefeedstock = apply_landcover_exclusion(template, restricted_mask)
+    cutoff_prefeedstock_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Saving pre-feedstock cutoff landcover SI to {cutoff_prefeedstock_path}...")
     cutoff_prefeedstock.to_netcdf(cutoff_prefeedstock_path)
     template.close()
@@ -124,6 +135,7 @@ def build_existing_committed_cutoff_si(
         bio_capacity_source="landcover",
         weight_source=weight_source,
         weights_path=weights_path,
+        farm_area_km2=farm_area_km2,
         run_label="existing/committed cutoff",
     )
     print("Investment-ready existing/committed cutoff SI completed.")
@@ -134,9 +146,14 @@ if __name__ == "__main__":
     # the cutoff landcover input; it does not generate relative-importance weights.
     parser = argparse.ArgumentParser(description="Build the investment-ready cutoff final SI dataset.")
     parser.add_argument(
+        "--scenario",
+        default=None,
+        help="Scenario name or YAML path. When provided, weights, farm area, and exclusion buffer come from config.",
+    )
+    parser.add_argument(
         "--weight-source",
         choices=["default", "empirical"],
-        default="empirical",
+        default=None,
         help="Weight source for the optimization SI build.",
     )
     parser.add_argument(
@@ -144,5 +161,47 @@ if __name__ == "__main__":
         default=None,
         help="Optional custom JSON empirical weight file.",
     )
+    parser.add_argument(
+        "--buffer-m",
+        type=float,
+        default=None,
+        help="Optional existing/committed plant exclusion buffer in meters.",
+    )
     args = parser.parse_args()
-    build_existing_committed_cutoff_si(weight_source=args.weight_source, weights_path=args.weights_file)
+
+    scenario_weight_source = "empirical"
+    scenario_weights_file = None
+    scenario_farm_area = None
+    scenario_buffer_m = 2900
+    scenario_config = None
+    scenario_output_paths = None
+    if args.scenario:
+        scenario_config = load_config(args.scenario)
+        scenario_weight_source, scenario_weights_file = get_weight_settings(scenario_config)
+        scenario_farm_area = get_farm_area_settings(scenario_config)
+        scenario_buffer_m = get_exclusion_settings(scenario_config)["existing_committed_buffer_m"]
+        scenario_output_paths = get_scenario_output_paths(scenario_config)
+
+    build_existing_committed_cutoff_si(
+        cutoff_prefeedstock_path=scenario_output_paths["cutoff_prefeedstock"] if scenario_output_paths else Path("Output") / "xr_SI_Landcover_beforefeedstock_existing_committed_cutoff.nc",
+        cutoff_landcover_path=scenario_output_paths["cutoff_landcover"] if scenario_output_paths else Path("Output") / "xr_SI_Landcover_existing_committed_cutoff.nc",
+        output_path=scenario_output_paths["cutoff_final_si"] if scenario_output_paths else Path("Output") / "xr_final_SI_all_existing_committed_cutoff.nc",
+        farmarea_output_path=scenario_output_paths["cutoff_farmarea"] if scenario_output_paths else Path("Output") / "xr_SI_Farmarea_existing_committed_cutoff.nc",
+        buffer_m=args.buffer_m if args.buffer_m is not None else scenario_buffer_m,
+        weight_source=args.weight_source or scenario_weight_source,
+        weights_path=args.weights_file or scenario_weights_file,
+        farm_area_km2=scenario_farm_area,
+    )
+
+    if scenario_config and scenario_output_paths:
+        write_stage_metadata(
+            scenario_output_paths["output_dir"] / "apply_exclusions_metadata.json",
+            scenario_config,
+            "apply-exclusions",
+            {
+                "cutoff_prefeedstock": scenario_output_paths["cutoff_prefeedstock"],
+                "cutoff_landcover": scenario_output_paths["cutoff_landcover"],
+                "cutoff_final_si": scenario_output_paths["cutoff_final_si"],
+                "cutoff_farmarea": scenario_output_paths["cutoff_farmarea"],
+            },
+        )

@@ -4,6 +4,9 @@ import numpy as np
 from pathlib import Path
 import json
 
+from resiting.config import load_config
+from resiting.scenario import get_farm_area_settings, get_scenario_output_paths, get_weight_settings, write_stage_metadata
+
 def _apply_exclusion_mask(ds, exclusion_mask, label):
     if exclusion_mask is None:
         return ds
@@ -30,6 +33,7 @@ def process_farm_area_suitability(
     weight_source="empirical",
     weights_path=None,
     weights_override=None,
+    farm_area_km2=None,
     write_outputs=True,
     return_dataset=False,
     run_label="full-area",
@@ -196,8 +200,9 @@ def process_farm_area_suitability(
 
     # --- STEP 10: Farm Area calculations ---
     print("Processing Step 10: Farm Area for Wind and Solar...")
-    suitablearea_wind = 4.0  # km2
-    suitablearea_solar = 0.4 # km2
+    farm_area_km2 = farm_area_km2 or {}
+    suitablearea_wind = float(farm_area_km2.get("Wind", 4.0))  # km2
+    suitablearea_solar = float(farm_area_km2.get("Solar", 0.4)) # km2
 
     rolgrid_wind = int(np.ceil(np.sqrt(suitablearea_wind / areapergrid)))
     rolgrid_solar = int(np.ceil(np.sqrt(suitablearea_solar / areapergrid)))
@@ -254,6 +259,7 @@ def process_farm_area_suitability(
     xr_final_SI = _apply_exclusion_mask(xr_final_SI, exclusion_mask, run_label)
 
     if write_outputs:
+        farmarea_output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"Saving Farm Area SI to {farmarea_output_path}...")
         xr_farmarea.to_netcdf(path=farmarea_output_path)
     xr_farmarea.close()
@@ -265,6 +271,7 @@ def process_farm_area_suitability(
         print(f"{t:7s} -> Max SI: {float(xr_final_SI[f'SI_{t}'].max()):.4f} | Sum AVA: {float(xr_final_SI[f'AVA_{t}'].sum()):.2f}{sum_cap}")
 
     if write_outputs:
+        final_output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"\nSaving final processed dataset to {final_output_path}...")
         try:
             xr_final_SI.to_netcdf(path=final_output_path)
@@ -283,9 +290,14 @@ if __name__ == "__main__":
     # lives in weightfactors/evaluate_weight_factors.py and is never triggered here.
     parser = argparse.ArgumentParser(description="Build the full-area final SI dataset.")
     parser.add_argument(
+        "--scenario",
+        default=None,
+        help="Scenario name or YAML path. When provided, weights and farm-area assumptions come from config.",
+    )
+    parser.add_argument(
         "--weight-source",
         choices=["default", "empirical"],
-        default="empirical",
+        default=None,
         help="Weight source for the production SI build.",
     )
     parser.add_argument(
@@ -294,4 +306,33 @@ if __name__ == "__main__":
         help="Optional custom JSON empirical weight file.",
     )
     args = parser.parse_args()
-    process_farm_area_suitability(weight_source=args.weight_source, weights_path=args.weights_file)
+
+    scenario_farm_area = None
+    scenario_weight_source = "empirical"
+    scenario_weights_file = None
+    scenario_config = None
+    scenario_output_paths = None
+    if args.scenario:
+        scenario_config = load_config(args.scenario)
+        scenario_weight_source, scenario_weights_file = get_weight_settings(scenario_config)
+        scenario_farm_area = get_farm_area_settings(scenario_config)
+        scenario_output_paths = get_scenario_output_paths(scenario_config)
+
+    process_farm_area_suitability(
+        final_output_path=scenario_output_paths["final_si"] if scenario_output_paths else None,
+        farmarea_output_path=scenario_output_paths["farmarea"] if scenario_output_paths else None,
+        weight_source=args.weight_source or scenario_weight_source,
+        weights_path=args.weights_file or scenario_weights_file,
+        farm_area_km2=scenario_farm_area,
+    )
+
+    if scenario_config and scenario_output_paths:
+        write_stage_metadata(
+            scenario_output_paths["output_dir"] / "farm_area_metadata.json",
+            scenario_config,
+            "farm-area",
+            {
+                "final_si": scenario_output_paths["final_si"],
+                "farmarea": scenario_output_paths["farmarea"],
+            },
+        )

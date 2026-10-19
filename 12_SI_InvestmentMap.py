@@ -1,3 +1,26 @@
+import argparse
+import json
+from pathlib import Path
+
+from resiting.config import load_config
+from resiting.scenario import get_investment_settings
+
+
+parser = argparse.ArgumentParser(description="Build scenario-driven investment site map outputs.")
+parser.add_argument(
+    "--scenario",
+    default="PDP2026_PH_Case4H",
+    help="Scenario name or YAML path. Defaults to base.",
+)
+parser.add_argument(
+    "--run-name",
+    default=None,
+    help="Optional output folder name under Output/. Overrides scenario output.investment_run_name.",
+)
+args = parser.parse_args()
+config = load_config(args.scenario)
+investment_settings = get_investment_settings(config)
+
 import linopy
 import pandas as pd
 import xarray as xr
@@ -5,7 +28,6 @@ import geopandas as gpd
 import numpy as np
 import folium
 from datetime import datetime
-from pathlib import Path
  
 # ======================================================================================================================
 # 1. Configuration
@@ -13,32 +35,44 @@ from pathlib import Path
 # Grid resolution, technology density assumptions, plant footprint size, and rolling-window sizes.
 # The rolling window represents the area around a candidate plant center that is considered part of the plant footprint.
 # ======================================================================================================================
-coarsenscale = 2
+coarsenscale = investment_settings["coarsen_scale"]
 lccs_resolution = 300 * coarsenscale #m
 areapergrid = (lccs_resolution/1000) ** 2 ## km2
-scenario_SI = 0  ## Include area where SI >= scenario_SI
+scenario_SI = investment_settings["si_threshold"]  ## Include area where SI >= scenario_SI
 
-mwperkm2_wind = 4.5 ## originally 9 MW/km2 but deduct by 50% of the technically available from IEA's Thailand CET
-mwperkm2_solar = 15 ## originally 30 MW/km2 but deduct by 50% of the technically available from IEA's Thailand CET
+mwperkm2_wind = investment_settings["wind_mw_per_km2"] ## originally 9 MW/km2 but deduct by 50% of the technically available from IEA's Thailand CET
+mwperkm2_solar = investment_settings["solar_mw_per_km2"] ## originally 30 MW/km2 but deduct by 50% of the technically available from IEA's Thailand CET
 
 mwpergrid_wind = np.round(areapergrid * mwperkm2_wind,2)
 mwpergrid_solar =  np.round(areapergrid * mwperkm2_solar,2)
 
-target_capacity_mw_wind = 50
-target_capacity_mw_solar = 10
+target_capacity_mw_wind = investment_settings["wind_mw"]
+target_capacity_mw_solar = investment_settings["solar_mw"]
 suitablearea_wind = target_capacity_mw_wind / mwperkm2_wind
 suitablearea_solar = target_capacity_mw_solar / mwperkm2_solar
 
-run_name = f'SSI_{scenario_SI}_CS_{coarsenscale}'
+run_name = args.run_name or investment_settings["investment_run_name"]
 output_dir = Path('Output') / run_name
 output_dir.mkdir(parents=True, exist_ok=True)
+
+metadata_path = output_dir / "run_metadata.json"
+with open(metadata_path, "w", encoding="utf-8") as f:
+    json.dump(
+        {
+            "scenario": investment_settings["scenario_name"],
+            "run_name": run_name,
+            "settings": investment_settings,
+        },
+        f,
+        indent=2,
+    )
 
 rollingwindow_wind = int(np.ceil(np.sqrt(suitablearea_wind/areapergrid)))
 rollingwindow_solar = int(np.ceil(np.sqrt(suitablearea_solar/areapergrid)))
 
-suitablearea_biomass = 100 ## km^2 
-suitablearea_bgec = 100 ## km^2
-suitablearea_msw = 100 ## km^2
+suitablearea_biomass = investment_settings["biomass_area_km2"] ## km^2 
+suitablearea_bgec = investment_settings["bgec_area_km2"] ## km^2
+suitablearea_msw = investment_settings["msw_area_km2"] ## km^2
 
 rollingwindow_biomass = int(np.ceil(np.sqrt(suitablearea_biomass/areapergrid)))
 rollingwindow_bgec = int(np.ceil(np.sqrt(suitablearea_bgec/areapergrid)))
@@ -66,7 +100,7 @@ def rolling_mean_positive(da, window):
 # Apply the SI threshold, remove availability where SI is zero, coarsen the raster grid, and preserve selected min/max
 # SI diagnostics from the original resolution.
 # ======================================================================================================================
-xr_final_SI_raw = xr.open_dataset('Output\\xr_final_SI_all_existing_committed_cutoff.nc')
+xr_final_SI_raw = xr.open_dataset(investment_settings["input_final_si"])
 xr_final_SI_raw = xr_final_SI_raw.drop_vars('ADM1_EN')
 # xr_final_SI_raw = xr_final_SI_raw.drop_vars('SI_BGEC')
 # xr_final_SI_raw = xr_final_SI_raw.drop_vars('SI_BGWW')
@@ -240,21 +274,9 @@ print('mwpergrid_solar = ',mwpergrid_solar)
 # ----------------------------------------------------------------------------------------------------------------------
 # These quotas drive the capacity that must be allocated by technology and region.
 # ======================================================================================================================
-enforce_total_quota = True
-enforce_regional_quota = True
-
-quotas = {
-    'wind': {'R0': 0, 'R10': 1900, 'R11': 1200, 'R12': 800, 'R2': 6600, 'R3': 600, 'R4': 1400},
-    'solar': {'R0': 100, 'R10': 1600, 'R11': 700, 'R12': 1900, 'R2': 1600, 'R3': 900, 'R4': 2600},
-    'biomass': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'bgec': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0},
-    'msw': {'R0': 0, 'R10': 0, 'R11': 0, 'R12': 0, 'R2': 0, 'R3': 0, 'R4': 0}
-    # 'wind': {'R0': 0, 'R10': 1500, 'R11': 920, 'R12': 610, 'R2': 5470, 'R3': 400, 'R4': 1100},
-    # 'solar': {'R0': 75, 'R10': 1275, 'R11': 525, 'R12': 1575, 'R2': 1275, 'R3': 675, 'R4': 2100},
-    # 'biomass': {'R0': 0, 'R10': 110, 'R11': 75, 'R12': 80, 'R2': 420, 'R3': 220, 'R4': 280},
-    # 'bgec': {'R0': 3, 'R10': 50, 'R11': 114, 'R12': 57, 'R2': 174, 'R3': 70, 'R4': 44},
-    # 'msw': {'R0': 133, 'R10': 68, 'R11': 100, 'R12': 39, 'R2': 227, 'R3': 97, 'R4': 96}
-}
+enforce_total_quota = investment_settings["enforce_total_quota"]
+enforce_regional_quota = investment_settings["enforce_regional_quota"]
+quotas = investment_settings["quotas"]
 
 quota_totals = {tech: sum(reg_quotas.values()) for tech, reg_quotas in quotas.items()}
 
@@ -465,9 +487,9 @@ if obj_terms:
 # 9. Solve Model and Run Basic Diagnostics
 # ======================================================================================================================
 print("presolve = ",m)
-m.solve(solver_name='highs',
-        mip_abs_gap = 0.1,
-        mip_rel_gap = 0.1,
+m.solve(solver_name=investment_settings["solver_name"],
+        mip_abs_gap = investment_settings["mip_abs_gap"],
+        mip_rel_gap = investment_settings["mip_rel_gap"],
         )
 
 print('Solver status =', m.status)

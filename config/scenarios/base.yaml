@@ -1,0 +1,29 @@
+# Copy this file when assumptions change:
+#   python -m resiting new-scenario updated_2027 --from base
+
+scenario:
+  name: base
+  description: Baseline scenario that uses config/default.yaml values.
+
+# Add only the values you want to override. Examples:
+#
+# assumptions:
+#   si_threshold: 1
+#   coarsen_scale: 2
+#
+# capacity_density:
+#   wind_mw_per_km2: 4.5
+#   solar_mw_per_km2: 15.0
+#
+# farm_area:
+#   wind_min_km2: 4.0
+#   solar_min_km2: 0.4
+#
+# exclusions:
+#   existing_committed_buffer_m: 2900
+#
+# quotas:
+#   wind:
+#     R10: 1900
+#   solar:
+#     R10: 1600
